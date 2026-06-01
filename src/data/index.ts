@@ -1,0 +1,23 @@
+import { activities } from './activities';
+import { loot } from './loot';
+import { monsters } from './monsters';
+import { moods } from './moods';
+import { names } from './names';
+import { places } from './places';
+import { titles } from './titles';
+import { tones } from './tones';
+import { traps } from './traps';
+
+export const RPG = {
+  activities,
+  loot,
+  monsters,
+  moods,
+  names,
+  places,
+  titles,
+  tones,
+  traps,
+};
+
+export type RPGData = typeof RPG;
