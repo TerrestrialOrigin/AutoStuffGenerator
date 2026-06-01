@@ -1,0 +1,52 @@
+{
+  "name": "auto-stuff-generator",
+  "version": "0.0.0",
+  "description": "Generates random text for things like characters, place names, treasure chest contents (for RPGs and things)",
+  "main": "dist/index.js",
+  "module": "dist/index.js",
+  "types": "dist/types/index.d.ts",
+  "files": [
+    "dist/**/*"
+  ],
+  "scripts": {
+    "build": "npm run lint && npm run type-check && npm run test && esbuild --bundle --minify --sourcemap src/index.ts --outfile=dist/index.js --format=esm && npm run types",
+    "type-check": "tsc --noEmit",
+    "types": "tsc",
+    "test": "jest",
+    "lint": "eslint \"src/**/*.{ts,tsx}\"",
+    "type-check:watch": "tsc --noEmit --watch",
+    "build:watch": "esbuild --bundle --watch --sourcemap src/index.ts --outfile=dist/index.js --format=esm",
+    "lint:watch": "nodemon --watch src --ext ts,tsx --exec \"npm run lint\"",
+    "dev": "concurrently \"npm run type-check:watch\" \"npm run build:watch\" \"npm run lint:watch\""
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/TerrestrialOrigin/AutoStuffGenerator.git"
+  },
+  "keywords": [
+    "template",
+    "npm",
+    "library"
+  ],
+  "author": "Terrestrial Origin LLC",
+  "license": "Propriatory",
+  "bugs": {
+    "url": "https://github.com/TerrestrialOrigin/AutoStuffGenerator#issues"
+  },
+  "homepage": "https://github.com/TerrestrialOrigin/AutoStuffGenerator#readme",
+  "devDependencies": {
+    "@eslint/js": "^9.20.0",
+    "@types/jest": "^30.0.0",
+    "@typescript-eslint/eslint-plugin": "^8.23.0",
+    "@typescript-eslint/parser": "^8.23.0",
+    "concurrently": "^9.1.2",
+    "esbuild": "^0.27.2",
+    "eslint": "^9.20.0",
+    "globals": "^17.0.0",
+    "jest": "^30.2.0",
+    "nodemon": "^3.1.9",
+    "ts-jest": "^29.2.5",
+    "typescript": "^5.7.3",
+    "typescript-eslint": "^8.23.0"
+  }
+}

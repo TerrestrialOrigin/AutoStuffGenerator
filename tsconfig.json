@@ -1,0 +1,17 @@
+{
+  "compilerOptions": {
+    "target": "ES2017",                         // Modern JavaScript target
+    "module": "commonjs",                         // Use ES module syntax; esbuild handles bundling
+    "declaration": true,                        // Generate declaration (.d.ts) files for your library
+    "declarationDir": "dist/types",             // Output declarations to a specific folder
+    "outDir": "dist",                           // Where compiled JS files go (if you use tsc for emit)
+    "strict": true,                             // Enable all strict type-checking options
+    "moduleResolution": "node",                 // Use Node’s module resolution algorithm
+    "esModuleInterop": true,                    // Enables default import interop for CommonJS modules
+    "skipLibCheck": true,                       // Skip type checking of declaration files for faster builds
+    "forceConsistentCasingInFileNames": true,   // Ensure file name consistency across the project
+    "sourceMap": true                           // Generate source maps (optional, but useful for debugging)
+  },
+  "include": ["src"],                           // Compile files from the src directory
+  "exclude": ["node_modules", "dist", "**/*.spec.ts"]  // Exclude tests and output directories
+}
