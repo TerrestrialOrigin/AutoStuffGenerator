@@ -1,4 +1,55 @@
-import { generateDungeon, mulberry32 } from './dungeon';
+import {
+  createGenerationRandom,
+  createLevelSpec,
+  findStraightTunnel,
+  generateDungeon,
+  mulberry32,
+  placeRooms,
+  type FloorGrid,
+} from './dungeon';
+import type { DungeonResult } from './dungeon-types';
+
+/** Cells reachable from (startX, startY) via 4-neighbor moves over open cells. */
+function floodFill(
+  isOpen: (x: number, y: number) => boolean,
+  gridWidth: number,
+  gridHeight: number,
+  startX: number,
+  startY: number,
+): Set<number> {
+  const visited = new Set<number>([startY * gridWidth + startX]);
+  const queue: Array<[number, number]> = [[startX, startY]];
+  const neighborOffsets: Array<[number, number]> = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+  while (queue.length) {
+    const [x, y] = queue.pop() as [number, number];
+    for (const [offsetX, offsetY] of neighborOffsets) {
+      const nextX = x + offsetX, nextY = y + offsetY;
+      if (nextX < 0 || nextY < 0 || nextX >= gridWidth || nextY >= gridHeight) continue;
+      const key = nextY * gridWidth + nextX;
+      if (visited.has(key) || !isOpen(nextX, nextY)) continue;
+      visited.add(key);
+      queue.push([nextX, nextY]);
+    }
+  }
+  return visited;
+}
+
+function firstOpenCell(dungeon: DungeonResult): [number, number] | null {
+  for (let y = 0; y < dungeon.grid.gh; y++) for (let x = 0; x < dungeon.grid.gw; x++) {
+    if (dungeon.floor[y][x] === 1) return [x, y];
+  }
+  return null;
+}
+
+/** A spread of dungeons for invariant checks (fixed seeds — deterministic). */
+function invariantSample(): DungeonResult[] {
+  const sample: DungeonResult[] = [];
+  for (let seed = 1; seed <= 40; seed++) {
+    for (const level of [1, 3, 6]) sample.push(generateDungeon(seed, level, 'full'));
+  }
+  for (let seed = 41; seed <= 50; seed++) sample.push(generateDungeon(seed, 4, 'detailed'));
+  return sample;
+}
 
 describe('generateDungeon — determinism', () => {
   it('returns deeply-equal dungeons for the same seed/level/mode', () => {
@@ -92,9 +143,199 @@ describe('generateDungeon — mode enrichment', () => {
   });
 });
 
+describe('generateDungeon — back-fill room selection is seed-randomized', () => {
+  /**
+   * Replicates finding M2 (dead shuffle): the minimum-monster back-fill loop
+   * must draw rooms in a seed-shuffled order, not in room-creation order.
+   * We reconstruct which rooms are "others" (neither entrance room nor boss
+   * room) exactly the way the generator selects them, then compare how often
+   * the FIRST vs the LAST of those rooms ends up holding a monster across
+   * many seeds. The random 0.62-per-room pass is symmetric, and a working
+   * shuffle keeps back-fill symmetric too — so the two rates must be close.
+   * With the dead shuffle, every back-filled monster lands in the first
+   * rooms, skewing the first-room rate far above the last-room rate.
+   */
+  it('does not always back-fill the first rooms in filter order', () => {
+    const seedCount = 500;
+    let dungeonsMeasured = 0;
+    let firstRoomMonsterCount = 0;
+    let lastRoomMonsterCount = 0;
+
+    for (let seed = 1; seed <= seedCount; seed++) {
+      const dungeon = generateDungeon(seed, 2, 'full');
+      const roomsWithCenters = dungeon.rooms.map((room) => ({
+        ...room,
+        centerX: Math.floor(room.x + room.w / 2),
+        centerY: Math.floor(room.y + room.h / 2),
+      }));
+      const { gw: gridWidth, gh: gridHeight } = dungeon.grid;
+      const edgeDistance = (room: (typeof roomsWithCenters)[number]) =>
+        Math.min(
+          room.centerX,
+          gridWidth - 1 - room.centerX,
+          room.centerY,
+          gridHeight - 1 - room.centerY,
+        );
+      // Mirror the generator: entrance room = closest to an edge (stable sort).
+      const entranceRoom = roomsWithCenters
+        .slice()
+        .sort((first, second) => edgeDistance(first) - edgeDistance(second))[0];
+      // The main boss marker is placed via a room and carries its room id.
+      const bossMarker = dungeon.markers.find(
+        (marker) => marker.type === 'boss' && marker.room != null,
+      );
+      if (!bossMarker) continue;
+      const otherRooms = roomsWithCenters.filter(
+        (room) => room.id !== entranceRoom.id && room.id !== bossMarker.room,
+      );
+      if (otherRooms.length < 2) continue;
+
+      const roomsHoldingMonsters = new Set(
+        dungeon.markers
+          .filter((marker) => marker.type === 'monster' && marker.room != null)
+          .map((marker) => marker.room),
+      );
+      dungeonsMeasured++;
+      if (roomsHoldingMonsters.has(otherRooms[0].id)) firstRoomMonsterCount++;
+      if (roomsHoldingMonsters.has(otherRooms[otherRooms.length - 1].id)) lastRoomMonsterCount++;
+    }
+
+    expect(dungeonsMeasured).toBeGreaterThan(300);
+    const firstRoomRate = firstRoomMonsterCount / dungeonsMeasured;
+    const lastRoomRate = lastRoomMonsterCount / dungeonsMeasured;
+    // Symmetric placement keeps these rates close; the dead shuffle pushes
+    // every back-fill into the first room and drives the gap far higher.
+    expect(Math.abs(firstRoomRate - lastRoomRate)).toBeLessThan(0.08);
+  });
+});
+
 describe('generateDungeon — headless', () => {
   it('runs with no DOM globals referenced', () => {
     expect(typeof document).toBe('undefined');
     expect(() => generateDungeon(mulberry32(1)() * 0xffffffff, 3, 'detailed')).not.toThrow();
+  });
+});
+
+describe('generateDungeon — structural invariants', () => {
+  it('places every marker within grid bounds on an open cell', () => {
+    for (const dungeon of invariantSample()) {
+      const { gw: gridWidth, gh: gridHeight } = dungeon.grid;
+      for (const marker of dungeon.markers) {
+        expect(marker.x).toBeGreaterThanOrEqual(0);
+        expect(marker.y).toBeGreaterThanOrEqual(0);
+        expect(marker.x).toBeLessThan(gridWidth);
+        expect(marker.y).toBeLessThan(gridHeight);
+        const onNormalFloor = dungeon.floor[marker.y][marker.x] === 1;
+        const onSecretFloor = !!dungeon.secretFloor && dungeon.secretFloor[marker.y][marker.x] === 1;
+        expect(onNormalFloor || onSecretFloor).toBe(true);
+      }
+    }
+  });
+
+  it('produces a fully connected normal floor', () => {
+    for (const dungeon of invariantSample()) {
+      const { gw: gridWidth, gh: gridHeight } = dungeon.grid;
+      const start = firstOpenCell(dungeon);
+      expect(start).not.toBeNull();
+      if (!start) continue;
+      let openCellCount = 0;
+      for (let y = 0; y < gridHeight; y++) for (let x = 0; x < gridWidth; x++) {
+        if (dungeon.floor[y][x] === 1) openCellCount++;
+      }
+      const reached = floodFill(
+        (x, y) => dungeon.floor[y][x] === 1,
+        gridWidth, gridHeight, start[0], start[1],
+      );
+      expect(reached.size).toBe(openCellCount);
+    }
+  });
+
+  it('bores secrets only through rock and connects them via secret tunnels', () => {
+    let dungeonsWithSecrets = 0;
+    for (const dungeon of invariantSample()) {
+      if (!dungeon.secretFloor) continue;
+      dungeonsWithSecrets++;
+      const { gw: gridWidth, gh: gridHeight } = dungeon.grid;
+      const secretFloor = dungeon.secretFloor;
+      // carve-level isolation: no cell is both normal floor and secret floor
+      for (let y = 0; y < gridHeight; y++) for (let x = 0; x < gridWidth; x++) {
+        expect(dungeon.floor[y][x] === 1 && secretFloor[y][x] === 1).toBe(false);
+      }
+      // combined floor is fully connected: every secret room is reachable
+      // from the normal floor once secret-tunnel cells are included
+      const start = firstOpenCell(dungeon);
+      expect(start).not.toBeNull();
+      if (!start) continue;
+      const reached = floodFill(
+        (x, y) => dungeon.floor[y][x] === 1 || secretFloor[y][x] === 1,
+        gridWidth, gridHeight, start[0], start[1],
+      );
+      for (const secretRoom of dungeon.secretRooms) {
+        expect(reached.has(secretRoom.cy * gridWidth + secretRoom.cx)).toBe(true);
+      }
+    }
+    // the sample must actually exercise the secret paths, not vacuously pass
+    expect(dungeonsWithSecrets).toBeGreaterThan(10);
+  });
+});
+
+describe('generation steps — direct helper contracts', () => {
+  it('placeRooms produces in-bounds, non-touching rooms whose cells are carved', () => {
+    const spec = createLevelSpec(4);
+    const random = createGenerationRandom(20260704);
+    const { rooms, floor } = placeRooms(spec, random);
+    expect(rooms.length).toBeGreaterThan(0);
+    for (const room of rooms) {
+      expect(room.x).toBeGreaterThanOrEqual(1);
+      expect(room.y).toBeGreaterThanOrEqual(1);
+      expect(room.x + room.w).toBeLessThanOrEqual(spec.gw - 1);
+      expect(room.y + room.h).toBeLessThanOrEqual(spec.gh - 1);
+      for (let y = room.y; y < room.y + room.h; y++) for (let x = room.x; x < room.x + room.w; x++) {
+        expect(floor[y][x]).toBe(1);
+      }
+    }
+    for (const roomA of rooms) for (const roomB of rooms) {
+      if (roomA === roomB) continue;
+      const separated =
+        roomA.x + roomA.w < roomB.x || roomB.x + roomB.w < roomA.x ||
+        roomA.y + roomA.h < roomB.y || roomB.y + roomB.h < roomA.y;
+      expect(separated).toBe(true);
+    }
+  });
+
+  it('findStraightTunnel returns a straight rock-only tunnel between facing rects', () => {
+    // 10x7 grid; two 2x3 rooms carved with a 4-column rock gap between them
+    const floor: FloorGrid = Array.from({ length: 7 }, () => new Array<number>(10).fill(0));
+    const leftRoom = { x: 1, y: 2, w: 2, h: 3 };
+    const rightRoom = { x: 7, y: 2, w: 2, h: 3 };
+    for (const room of [leftRoom, rightRoom]) {
+      for (let y = room.y; y < room.y + room.h; y++) for (let x = room.x; x < room.x + room.w; x++) floor[y][x] = 1;
+    }
+    const tunnel = findStraightTunnel(floor, leftRoom, rightRoom);
+    expect(tunnel).not.toBeNull();
+    if (!tunnel) return;
+    // every tunnel cell is rock, and the tunnel is a straight single row
+    const rows = new Set(tunnel.cells.map((cell) => cell.y));
+    expect(rows.size).toBe(1);
+    for (const cell of tunnel.cells) expect(floor[cell.y][cell.x]).toBe(0);
+    expect(tunnel.cells.map((cell) => cell.x)).toEqual([3, 4, 5, 6]);
+  });
+
+  it('findStraightTunnel returns null when open floor blocks every straight line', () => {
+    const floor: FloorGrid = Array.from({ length: 7 }, () => new Array<number>(10).fill(0));
+    const leftRoom = { x: 1, y: 2, w: 2, h: 3 };
+    const rightRoom = { x: 7, y: 2, w: 2, h: 3 };
+    for (const room of [leftRoom, rightRoom]) {
+      for (let y = room.y; y < room.y + room.h; y++) for (let x = room.x; x < room.x + room.w; x++) floor[y][x] = 1;
+    }
+    for (let y = 0; y < 7; y++) floor[y][5] = 1; // a corridor wall of open cells between them
+    expect(findStraightTunnel(floor, leftRoom, rightRoom)).toBeNull();
+  });
+});
+
+describe('generateDungeon — fixed-seed regression', () => {
+  it('matches the locked output for representative seeds', () => {
+    expect(generateDungeon(0xc0ffee, 3, 'full')).toMatchSnapshot();
+    expect(generateDungeon(424242, 5, 'detailed')).toMatchSnapshot();
   });
 });
