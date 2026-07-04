@@ -8,8 +8,8 @@
    consumers get real types from the published declarations.
    ============================================================ */
 
-/** A random-number generator returning a value in [0, 1). */
-export type RNG = () => number;
+/** A random-number generator returning a value in [0, 1) — canonical declaration in rng-utils. */
+export type { RNG } from './rng-utils';
 
 /**
  * How much content the generator places:
@@ -36,9 +36,17 @@ export interface DungeonRoom {
   id: number;
 }
 
+/** The marker kinds the generator itself places and knows how to enrich. */
+export type KnownMarkerType = 'entrance' | 'exit' | 'boss' | 'monster' | 'treasure' | 'trap' | 'secret';
+
 /** A point of interest on the map (entrance, monster, treasure, trap, …). */
 export interface DungeonMarker {
-  type: string;
+  /**
+   * Marker kind. `(string & {})` keeps arbitrary consumer-defined kinds
+   * (e.g. an editor's `'other'`) assignable while still autocompleting
+   * and narrowing the known kinds.
+   */
+  type: KnownMarkerType | (string & {});
   x: number;
   y: number;
   dir?: string;

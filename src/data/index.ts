@@ -1,3 +1,4 @@
+import type { ContentSource } from '../content-types';
 import { activities } from './activities';
 import { loot } from './loot';
 import { monsters } from './monsters';
@@ -18,6 +19,6 @@ export const RPG = {
   titles,
   tones,
   traps,
-};
+} satisfies ContentSource;
 
 export type RPGData = typeof RPG;

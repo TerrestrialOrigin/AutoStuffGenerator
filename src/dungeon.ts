@@ -10,14 +10,17 @@
    ============================================================ */
 import { RPG } from './data';
 import { RPGGen, type RPGContext } from './rpg-gen';
+import type { GenreMap, MonsterEntry } from './content-types';
 import type {
   DungeonMarker,
   DungeonMode,
   DungeonResult,
   DungeonSecretPath,
   DungeonSecretRoom,
+  KnownMarkerType,
   RNG,
 } from './dungeon-types';
+import { capitalizeFirst, randomIndex, randomInt, shuffleInPlace } from './rng-utils';
 
 /* ---------------- seeded RNG (mulberry32) ---------------- */
 export function mulberry32(a: number): () => number {
@@ -141,7 +144,7 @@ export interface InternalRoom extends CenteredRect {
 export type FloorGrid = number[][];
 
 /** Mutable carving surface shared by corridor and entrance/exit carving. */
-interface CarveSurface {
+export interface CarveSurface {
   floor: FloorGrid;
   corridorCells: Record<number, boolean>;
   gridWidth: number;
@@ -188,22 +191,15 @@ export interface GenerationRandom {
 
 export const createGenerationRandom = (seed: number): GenerationRandom => {
   const next = mulberry32(seed);
-  const index = (length: number) => Math.floor(next() * length);
   return {
     next,
-    intBetween: (min, max) => min + Math.floor(next() * (max - min + 1)),
-    index,
-    pickFrom: (list) => list[index(list.length)],
+    intBetween: (min, max) => randomInt(next, min, max),
+    index: (length) => randomIndex(next, length),
+    // NOTE: unlike rng-utils' pick, this draws once even for an empty list
+    // (yielding undefined) — callers guard, and draw order must not change.
+    pickFrom: (list) => list[randomIndex(next, list.length)],
     chance: (probability) => next() < probability,
-    shuffleInPlace: (list) => {
-      for (let i = list.length - 1; i > 0; i--) {
-        const j = index(i + 1);
-        const swapped = list[i];
-        list[i] = list[j];
-        list[j] = swapped;
-      }
-      return list;
-    },
+    shuffleInPlace: (list) => shuffleInPlace(next, list),
   };
 };
 
@@ -567,13 +563,6 @@ const carveSecrets = (
 
 /* ---------------- step 5: detailed-mode enrichment ---------------- */
 
-interface MonsterEntry {
-  n?: string;
-  a?: unknown;
-}
-
-const capitalizeFirst = (text: string): string => text ? text.charAt(0).toUpperCase() + text.slice(1) : text;
-
 const pickDifficulty = (random: GenerationRandom): string => {
   const roll = random.next();
   return roll < DIFFICULTY_EASY_THRESHOLD ? 'Easy' : (roll < DIFFICULTY_MEDIUM_THRESHOLD ? 'Medium' : 'Hard');
@@ -632,26 +621,25 @@ const enrichTrapMarker = (marker: DungeonMarker, context: RPGContext, random: Ge
   marker.note = '';
 };
 
-/* 'detailed' mode: name & classify every foe, hoard and trap from the random lists */
+/* 'detailed' mode: name & classify every foe, hoard and trap from the random
+   lists. Enrichment is a per-kind lookup: markers of kinds without an enricher
+   (including consumer-defined kinds) pass through untouched and draw nothing. */
 const enrichDetailed = (markers: DungeonMarker[], context: RPGContext, random: GenerationRandom): void => {
-  const monstersByGenre: Record<string, MonsterEntry[] | undefined> = RPG.monsters;
+  const monstersByGenre: GenreMap<MonsterEntry> = RPG.monsters;
   const bossCreaturePool = (monstersByGenre[context.genre] || []).concat(monstersByGenre.generic || [])
     .filter((monster) => !monster.a); // bosses are never animals
+  const enrichersByKind: Partial<Record<KnownMarkerType, (marker: DungeonMarker) => void>> = {
+    monster: (marker) => enrichMonsterMarker(marker, context, random),
+    boss: (marker) => enrichBossMarker(marker, context, bossCreaturePool, random),
+    treasure: (marker) => enrichTreasureMarker(marker, context, random),
+    trap: (marker) => enrichTrapMarker(marker, context, random),
+  };
   let sequenceNumber = 0;
   markers.forEach((marker) => {
-    if (marker.type === 'monster') {
-      enrichMonsterMarker(marker, context, random);
-      marker.seq = sequenceNumber++;
-    } else if (marker.type === 'boss') {
-      enrichBossMarker(marker, context, bossCreaturePool, random);
-      marker.seq = sequenceNumber++;
-    } else if (marker.type === 'treasure') {
-      enrichTreasureMarker(marker, context, random);
-      marker.seq = sequenceNumber++;
-    } else if (marker.type === 'trap') {
-      enrichTrapMarker(marker, context, random);
-      marker.seq = sequenceNumber++;
-    }
+    const enrich = enrichersByKind[marker.type as KnownMarkerType];
+    if (!enrich) return;
+    enrich(marker);
+    marker.seq = sequenceNumber++;
   });
 };
 
@@ -668,10 +656,63 @@ const pickNameAndFlavor = (context: RPGContext | null, random: GenerationRandom)
   return { name, flavor };
 };
 
+/* ---------------- swappable strategy seam ---------------- */
+
+/** What the secret-carving step yields (never null; the orchestrator decides whether to keep it). */
+export interface SecretFeatures {
+  secretPaths: DungeonSecretPath[];
+  secretRooms: DungeonSecretRoom[];
+  secretFloor: FloorGrid;
+}
+
+/**
+ * The generation pipeline as a swappable interface. Each step owns its
+ * documented invariants — generateDungeon does not re-validate geometry:
+ * - `placeRooms`: rooms in-bounds, pairwise non-touching, carved into the returned floor.
+ * - `carveCorridors`: mutates `surface` so every room is reachable; returns the connected room-id pairs.
+ * - `placeMarkers`: markers land on open (or here-carved) cells; may carve entrance/exit corridors on `surface`.
+ * - `carveSecrets`: secret geometry only in ROCK cells of `floor`, recorded solely on the returned secret grid.
+ * - `enrichMarkers`: mutates markers in place (labels/notes/seq); unknown kinds untouched.
+ * - `pickNameAndFlavor`: pure; null fields fall back to the generator's stock name/flavor.
+ *
+ * Customize a single step by spreading the default:
+ * `generateDungeon(seed, level, mode, { ...defaultDungeonStrategy, placeRooms: mine })`.
+ */
+export interface DungeonStrategy {
+  placeRooms(spec: ResolvedLevelSpec, random: GenerationRandom): { rooms: InternalRoom[]; floor: FloorGrid };
+  carveCorridors(rooms: InternalRoom[], surface: CarveSurface, random: GenerationRandom): Record<string, boolean>;
+  placeMarkers(rooms: InternalRoom[], surface: CarveSurface, random: GenerationRandom): DungeonMarker[];
+  carveSecrets(
+    rooms: InternalRoom[],
+    floor: FloorGrid,
+    connectedPairs: Record<string, boolean>,
+    spec: ResolvedLevelSpec,
+    markers: DungeonMarker[],
+    random: GenerationRandom,
+  ): SecretFeatures;
+  enrichMarkers(markers: DungeonMarker[], context: RPGContext, random: GenerationRandom): void;
+  pickNameAndFlavor(context: RPGContext | null, random: GenerationRandom): { name: string | null; flavor: string | null };
+}
+
+/** The built-in algorithm — spread it to override individual steps. */
+export const defaultDungeonStrategy: DungeonStrategy = {
+  placeRooms,
+  carveCorridors,
+  placeMarkers,
+  carveSecrets,
+  enrichMarkers: enrichDetailed,
+  pickNameAndFlavor,
+};
+
 /* ============================================================
    GENERATION  ->  returns a plain JSON-able dungeon object
    ============================================================ */
-export function generateDungeon(seed: number, level?: number, mode?: DungeonMode): DungeonResult {
+export function generateDungeon(
+  seed: number,
+  level?: number,
+  mode?: DungeonMode,
+  strategy: DungeonStrategy = defaultDungeonStrategy,
+): DungeonResult {
   // input robustness: a non-finite seed becomes a deterministic default (0);
   // an unknown/missing mode becomes 'full'; level is clamped in createLevelSpec.
   const safeSeed = (typeof seed === 'number' && isFinite(seed)) ? (seed >>> 0) : 0;
@@ -679,18 +720,18 @@ export function generateDungeon(seed: number, level?: number, mode?: DungeonMode
   const spec = createLevelSpec(level);
   const random = createGenerationRandom(safeSeed);
 
-  const { rooms, floor } = placeRooms(spec, random);
+  const { rooms, floor } = strategy.placeRooms(spec, random);
   const surface: CarveSurface = { floor, corridorCells: {}, gridWidth: spec.gw, gridHeight: spec.gh };
-  const connectedPairs = carveCorridors(rooms, surface, random);
+  const connectedPairs = strategy.carveCorridors(rooms, surface, random);
 
-  const markers: DungeonMarker[] = safeMode !== 'empty' ? placeMarkers(rooms, surface, random) : [];
+  const markers: DungeonMarker[] = safeMode !== 'empty' ? strategy.placeMarkers(rooms, surface, random) : [];
   const { secretPaths, secretRooms, secretFloor } = safeMode !== 'empty'
-    ? carveSecrets(rooms, floor, connectedPairs, spec, markers, random)
+    ? strategy.carveSecrets(rooms, floor, connectedPairs, spec, markers, random)
     : { secretPaths: [], secretRooms: [], secretFloor: createRockGrid(spec.gw, spec.gh) };
 
   const contentContext: RPGContext | null = RPGGen ? RPGGen.context(random.next) : null;
-  if (safeMode === 'detailed' && contentContext) enrichDetailed(markers, contentContext, random);
-  const { name, flavor } = pickNameAndFlavor(contentContext, random);
+  if (safeMode === 'detailed' && contentContext) strategy.enrichMarkers(markers, contentContext, random);
+  const { name, flavor } = strategy.pickNameAndFlavor(contentContext, random);
 
   const result: DungeonResult = {
     version: 1,
