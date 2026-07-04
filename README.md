@@ -36,11 +36,52 @@ console.log(RPGGen.randomMonster(rng, context));
 console.log(RPGGen.randomName(rng, context));
 ```
 
-`generateDungeon(seed, level?, mode?)`:
+`generateDungeon(seed, level?, mode?, strategy?)`:
 - `seed` — number; a non-finite value falls back to a deterministic default.
 - `level` — `1`–`6` (clamped); higher levels yield larger, more complex maps.
 - `mode` — `'empty'` (geometry only), `'full'` (default; markers), or
   `'detailed'` (named/classified foes, hoards and traps).
+- `strategy` — optional `DungeonStrategy` overriding pipeline steps (defaults
+  to the built-in algorithm).
+
+## Custom content (`ContentSource`)
+
+The content engine reads from a typed `ContentSource` (monsters, names,
+titles, tones, loot, places, moods, activities, traps). `RPGGen` is the engine
+bound to the built-in data; build one over your own content with
+`createRPGGen`, spreading the built-in `RPG` object to replace just one bucket:
+
+```ts
+import { createRPGGen, RPG, mulberry32 } from 'auto-stuff-generator';
+
+const myGen = createRPGGen({
+  ...RPG,
+  monsters: { fantasy: [{ n: 'Gloom Weasel' }], generic: [] },
+});
+console.log(myGen.randomMonster(mulberry32(7), myGen.context(mulberry32(7))));
+```
+
+The engine passes content strings through verbatim — escape them yourself if
+you render generated text into HTML.
+
+## Custom dungeon algorithms (`DungeonStrategy`)
+
+The dungeon pipeline (room placement, corridor carving, marker placement,
+secret carving, enrichment, naming) is a swappable interface. Override a
+single step by spreading the exported default:
+
+```ts
+import { defaultDungeonStrategy, generateDungeon } from 'auto-stuff-generator';
+
+const dungeon = generateDungeon(42, 3, 'full', {
+  ...defaultDungeonStrategy,
+  placeRooms: myRoomPlacer, // must uphold the invariants documented on DungeonStrategy
+});
+```
+
+Markers use the `KnownMarkerType` union (`entrance`, `exit`, `boss`,
+`monster`, `treasure`, `trap`, `secret`); consumer-defined kind strings remain
+assignable and pass through enrichment untouched.
 
 ## Development
 

@@ -8,15 +8,29 @@
    ============================================================ */
 
 // Random-content engine + its types
-export { RPGGen } from './rpg-gen';
+export { createRPGGen, isVermin, RPGGen } from './rpg-gen';
 export type { RNG, RPGContext, RPGGenType } from './rpg-gen';
 
-// Aggregated data buckets (the content the engine draws from)
+// Typed contract for the content the engine draws from (inject via createRPGGen)
+export type {
+  ContentSource,
+  GenreMap,
+  GivenNameEntry,
+  MonsterEntry,
+  NamesTable,
+  SurnameEntry,
+  TitleEntry,
+  ToneCategory,
+  ToneTable,
+} from './content-types';
+
+// Aggregated data buckets (the built-in default ContentSource)
 export { RPG } from './data';
 export type { RPGData } from './data';
 
-// Procedural dungeon generator + seeded RNG factory
-export { generateDungeon, mulberry32 } from './dungeon';
+// Procedural dungeon generator + seeded RNG factory + strategy seam
+export { defaultDungeonStrategy, generateDungeon, mulberry32 } from './dungeon';
+export type { CarveSurface, DungeonStrategy, FloorGrid, GenerationRandom, InternalRoom, ResolvedLevelSpec, SecretFeatures } from './dungeon';
 
 // Dungeon result/value types
 export type {
@@ -28,4 +42,5 @@ export type {
   DungeonSecretPath,
   DungeonSecretRoom,
   DungeonTally,
+  KnownMarkerType,
 } from './dungeon-types';
