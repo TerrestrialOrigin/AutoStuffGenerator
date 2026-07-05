@@ -29,7 +29,7 @@ export interface RPGContext {
   tone: string | null;
 }
 
-const GENRES = ['fantasy', 'sci-fi', 'modern', 'horror'];
+const GENRES = ['fantasy', 'sci-fi', 'modern', 'horror'] as const;
 
 /** The genre's pool merged with any shared "generic" pool. */
 const genrePool = <EntryType>(map: Partial<Record<string, EntryType[]>>, genre: string): EntryType[] =>
