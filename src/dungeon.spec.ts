@@ -35,7 +35,7 @@ function floodFill(
 }
 
 function firstOpenCell(dungeon: DungeonResult): [number, number] | null {
-  for (let y = 0; y < dungeon.grid.gh; y++) for (let x = 0; x < dungeon.grid.gw; x++) {
+  for (let y = 0; y < dungeon.grid.height; y++) for (let x = 0; x < dungeon.grid.width; x++) {
     if (dungeon.floor[y]?.[x] === 1) return [x, y];
   }
   return null;
@@ -93,8 +93,8 @@ describe('generateDungeon — level scaling and bounds', () => {
   it('scales grid size with level', () => {
     const low = generateDungeon(5, 1);
     const high = generateDungeon(5, 6);
-    expect(high.grid.gw).toBeGreaterThan(low.grid.gw);
-    expect(high.grid.gh).toBeGreaterThan(low.grid.gh);
+    expect(high.grid.width).toBeGreaterThan(low.grid.width);
+    expect(high.grid.height).toBeGreaterThan(low.grid.height);
   });
 });
 
@@ -165,10 +165,10 @@ describe('generateDungeon — back-fill room selection is seed-randomized', () =
       const dungeon = generateDungeon(seed, 2, 'full');
       const roomsWithCenters = dungeon.rooms.map((room) => ({
         ...room,
-        centerX: Math.floor(room.x + room.w / 2),
-        centerY: Math.floor(room.y + room.h / 2),
+        centerX: Math.floor(room.gridX + room.width / 2),
+        centerY: Math.floor(room.gridY + room.height / 2),
       }));
-      const { gw: gridWidth, gh: gridHeight } = dungeon.grid;
+      const { width: gridWidth, height: gridHeight } = dungeon.grid;
       const edgeDistance = (room: (typeof roomsWithCenters)[number]) =>
         Math.min(
           room.centerX,
@@ -183,18 +183,18 @@ describe('generateDungeon — back-fill room selection is seed-randomized', () =
       if (!entranceRoom) continue;
       // The main boss marker is placed via a room and carries its room id.
       const bossMarker = dungeon.markers.find(
-        (marker) => marker.type === 'boss' && marker.room != null,
+        (marker) => marker.type === 'boss' && marker.roomId != null,
       );
       if (!bossMarker) continue;
       const otherRooms = roomsWithCenters.filter(
-        (room) => room.id !== entranceRoom.id && room.id !== bossMarker.room,
+        (room) => room.id !== entranceRoom.id && room.id !== bossMarker.roomId,
       );
       if (otherRooms.length < 2) continue;
 
       const roomsHoldingMonsters = new Set(
         dungeon.markers
-          .filter((marker) => marker.type === 'monster' && marker.room != null)
-          .map((marker) => marker.room),
+          .filter((marker) => marker.type === 'monster' && marker.roomId != null)
+          .map((marker) => marker.roomId),
       );
       dungeonsMeasured++;
       const firstOtherRoom = otherRooms[0], lastOtherRoom = otherRooms[otherRooms.length - 1];
@@ -221,14 +221,14 @@ describe('generateDungeon — headless', () => {
 describe('generateDungeon — structural invariants', () => {
   it('places every marker within grid bounds on an open cell', () => {
     for (const dungeon of invariantSample()) {
-      const { gw: gridWidth, gh: gridHeight } = dungeon.grid;
+      const { width: gridWidth, height: gridHeight } = dungeon.grid;
       for (const marker of dungeon.markers) {
-        expect(marker.x).toBeGreaterThanOrEqual(0);
-        expect(marker.y).toBeGreaterThanOrEqual(0);
-        expect(marker.x).toBeLessThan(gridWidth);
-        expect(marker.y).toBeLessThan(gridHeight);
-        const onNormalFloor = dungeon.floor[marker.y]?.[marker.x] === 1;
-        const onSecretFloor = !!dungeon.secretFloor && dungeon.secretFloor[marker.y]?.[marker.x] === 1;
+        expect(marker.gridX).toBeGreaterThanOrEqual(0);
+        expect(marker.gridY).toBeGreaterThanOrEqual(0);
+        expect(marker.gridX).toBeLessThan(gridWidth);
+        expect(marker.gridY).toBeLessThan(gridHeight);
+        const onNormalFloor = dungeon.floor[marker.gridY]?.[marker.gridX] === 1;
+        const onSecretFloor = !!dungeon.secretFloor && dungeon.secretFloor[marker.gridY]?.[marker.gridX] === 1;
         expect(onNormalFloor || onSecretFloor).toBe(true);
       }
     }
@@ -236,7 +236,7 @@ describe('generateDungeon — structural invariants', () => {
 
   it('produces a fully connected normal floor', () => {
     for (const dungeon of invariantSample()) {
-      const { gw: gridWidth, gh: gridHeight } = dungeon.grid;
+      const { width: gridWidth, height: gridHeight } = dungeon.grid;
       const start = firstOpenCell(dungeon);
       expect(start).not.toBeNull();
       if (!start) continue;
@@ -257,7 +257,7 @@ describe('generateDungeon — structural invariants', () => {
     for (const dungeon of invariantSample()) {
       if (!dungeon.secretFloor) continue;
       dungeonsWithSecrets++;
-      const { gw: gridWidth, gh: gridHeight } = dungeon.grid;
+      const { width: gridWidth, height: gridHeight } = dungeon.grid;
       const secretFloor = dungeon.secretFloor;
       // carve-level isolation: no cell is both normal floor and secret floor
       for (let y = 0; y < gridHeight; y++) for (let x = 0; x < gridWidth; x++) {
@@ -273,7 +273,7 @@ describe('generateDungeon — structural invariants', () => {
         gridWidth, gridHeight, start[0], start[1],
       );
       for (const secretRoom of dungeon.secretRooms) {
-        expect(reached.has(secretRoom.cy * gridWidth + secretRoom.cx)).toBe(true);
+        expect(reached.has(secretRoom.centerY * gridWidth + secretRoom.centerX)).toBe(true);
       }
     }
     // the sample must actually exercise the secret paths, not vacuously pass
@@ -288,19 +288,19 @@ describe('generation steps — direct helper contracts', () => {
     const { rooms, floor } = placeRooms(spec, random);
     expect(rooms.length).toBeGreaterThan(0);
     for (const room of rooms) {
-      expect(room.x).toBeGreaterThanOrEqual(1);
-      expect(room.y).toBeGreaterThanOrEqual(1);
-      expect(room.x + room.w).toBeLessThanOrEqual(spec.gw - 1);
-      expect(room.y + room.h).toBeLessThanOrEqual(spec.gh - 1);
-      for (let y = room.y; y < room.y + room.h; y++) for (let x = room.x; x < room.x + room.w; x++) {
+      expect(room.gridX).toBeGreaterThanOrEqual(1);
+      expect(room.gridY).toBeGreaterThanOrEqual(1);
+      expect(room.gridX + room.width).toBeLessThanOrEqual(spec.gridWidth - 1);
+      expect(room.gridY + room.height).toBeLessThanOrEqual(spec.gridHeight - 1);
+      for (let y = room.gridY; y < room.gridY + room.height; y++) for (let x = room.gridX; x < room.gridX + room.width; x++) {
         expect(floor[y]?.[x]).toBe(1);
       }
     }
     for (const roomA of rooms) for (const roomB of rooms) {
       if (roomA === roomB) continue;
       const separated =
-        roomA.x + roomA.w < roomB.x || roomB.x + roomB.w < roomA.x ||
-        roomA.y + roomA.h < roomB.y || roomB.y + roomB.h < roomA.y;
+        roomA.gridX + roomA.width < roomB.gridX || roomB.gridX + roomB.width < roomA.gridX ||
+        roomA.gridY + roomA.height < roomB.gridY || roomB.gridY + roomB.height < roomA.gridY;
       expect(separated).toBe(true);
     }
   });
@@ -308,27 +308,27 @@ describe('generation steps — direct helper contracts', () => {
   it('findStraightTunnel returns a straight rock-only tunnel between facing rects', () => {
     // 10x7 grid; two 2x3 rooms carved with a 4-column rock gap between them
     const floor: FloorGrid = Array.from({ length: 7 }, () => new Array<number>(10).fill(0));
-    const leftRoom = { x: 1, y: 2, w: 2, h: 3 };
-    const rightRoom = { x: 7, y: 2, w: 2, h: 3 };
+    const leftRoom = { gridX: 1, gridY: 2, width: 2, height: 3 };
+    const rightRoom = { gridX: 7, gridY: 2, width: 2, height: 3 };
     for (const room of [leftRoom, rightRoom]) {
-      for (let y = room.y; y < room.y + room.h; y++) { const floorRow = floor[y]; if (floorRow) for (let x = room.x; x < room.x + room.w; x++) floorRow[x] = 1; }
+      for (let y = room.gridY; y < room.gridY + room.height; y++) { const floorRow = floor[y]; if (floorRow) for (let x = room.gridX; x < room.gridX + room.width; x++) floorRow[x] = 1; }
     }
     const tunnel = findStraightTunnel(floor, leftRoom, rightRoom);
     expect(tunnel).not.toBeNull();
     if (!tunnel) return;
     // every tunnel cell is rock, and the tunnel is a straight single row
-    const rows = new Set(tunnel.cells.map((cell) => cell.y));
+    const rows = new Set(tunnel.cells.map((cell) => cell.gridY));
     expect(rows.size).toBe(1);
-    for (const cell of tunnel.cells) expect(floor[cell.y]?.[cell.x]).toBe(0);
-    expect(tunnel.cells.map((cell) => cell.x)).toEqual([3, 4, 5, 6]);
+    for (const cell of tunnel.cells) expect(floor[cell.gridY]?.[cell.gridX]).toBe(0);
+    expect(tunnel.cells.map((cell) => cell.gridX)).toEqual([3, 4, 5, 6]);
   });
 
   it('findStraightTunnel returns null when open floor blocks every straight line', () => {
     const floor: FloorGrid = Array.from({ length: 7 }, () => new Array<number>(10).fill(0));
-    const leftRoom = { x: 1, y: 2, w: 2, h: 3 };
-    const rightRoom = { x: 7, y: 2, w: 2, h: 3 };
+    const leftRoom = { gridX: 1, gridY: 2, width: 2, height: 3 };
+    const rightRoom = { gridX: 7, gridY: 2, width: 2, height: 3 };
     for (const room of [leftRoom, rightRoom]) {
-      for (let y = room.y; y < room.y + room.h; y++) { const floorRow = floor[y]; if (floorRow) for (let x = room.x; x < room.x + room.w; x++) floorRow[x] = 1; }
+      for (let y = room.gridY; y < room.gridY + room.height; y++) { const floorRow = floor[y]; if (floorRow) for (let x = room.gridX; x < room.gridX + room.width; x++) floorRow[x] = 1; }
     }
     for (let y = 0; y < 7; y++) { const floorRow = floor[y]; if (floorRow) floorRow[5] = 1; } // a corridor wall of open cells between them
     expect(findStraightTunnel(floor, leftRoom, rightRoom)).toBeNull();

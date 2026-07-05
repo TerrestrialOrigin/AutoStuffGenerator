@@ -8,8 +8,8 @@
    placeRooms -> carveCorridors -> placeMarkers -> carveSecrets ->
    enrichDetailed -> pickNameAndFlavor.
    ============================================================ */
-import { RPG } from './data';
-import { RPGGen, type RPGContext } from './rpg-gen';
+import { defaultContent } from './data';
+import { defaultContentGenerator, type GenerationContext } from './rpg-gen';
 import type { GenreMap, MonsterEntry } from './content-types';
 import type {
   DungeonMarker,
@@ -18,17 +18,17 @@ import type {
   DungeonSecretPath,
   DungeonSecretRoom,
   KnownMarkerType,
-  RNG,
+  RandomNumberGenerator,
 } from './dungeon-types';
 import { capitalizeFirst, randomIndex, randomInt, shuffleInPlace } from './rng-utils';
 
 /* ---------------- seeded RNG (mulberry32) ---------------- */
-export function mulberry32(a: number): () => number {
+export function mulberry32(state: number): () => number {
   return function () {
-    a |= 0; a = a + 0x6D2B79F5 | 0;
-    let t = Math.imul(a ^ a >>> 15, 1 | a);
-    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
-    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+    state |= 0; state = state + 0x6D2B79F5 | 0;
+    let mixed = Math.imul(state ^ state >>> 15, 1 | state);
+    mixed = mixed + Math.imul(mixed ^ mixed >>> 7, 61 | mixed) ^ mixed;
+    return ((mixed ^ mixed >>> 14) >>> 0) / 4294967296;
   };
 }
 
@@ -46,11 +46,11 @@ const MAX_LEVEL = 6;
 const DEFAULT_LEVEL = 3;
 
 interface LevelSpecEntry {
-  gw: number;
-  gh: number;
+  gridWidth: number;
+  gridHeight: number;
   rooms: [number, number];
-  rw: [number, number];
-  rh: [number, number];
+  roomWidthRange: [number, number];
+  roomHeightRange: [number, number];
   secretMax: number;
 }
 
@@ -61,12 +61,12 @@ export interface ResolvedLevelSpec extends LevelSpecEntry {
 /* complexity levels — grid scales with level so the map always fills
    the same page area; rooms (and secrets) grow with level. */
 const LEVEL_SPECS: Record<number, LevelSpecEntry> = {
-  1: { gw: 14, gh: 15, rooms: [1, 3], rw: [4, 7], rh: [4, 6], secretMax: 1 },
-  2: { gw: 18, gh: 20, rooms: [4, 6], rw: [3, 6], rh: [3, 5], secretMax: 1 },
-  3: { gw: 23, gh: 25, rooms: [7, 10], rw: [3, 6], rh: [3, 5], secretMax: 2 },
-  4: { gw: 28, gh: 30, rooms: [11, 14], rw: [3, 5], rh: [3, 5], secretMax: 3 },
-  5: { gw: 33, gh: 36, rooms: [15, 19], rw: [3, 5], rh: [2, 4], secretMax: 4 },
-  6: { gw: 38, gh: 41, rooms: [20, 26], rw: [2, 5], rh: [2, 4], secretMax: 5 }
+  1: { gridWidth: 14, gridHeight: 15, rooms: [1, 3], roomWidthRange: [4, 7], roomHeightRange: [4, 6], secretMax: 1 },
+  2: { gridWidth: 18, gridHeight: 20, rooms: [4, 6], roomWidthRange: [3, 6], roomHeightRange: [3, 5], secretMax: 1 },
+  3: { gridWidth: 23, gridHeight: 25, rooms: [7, 10], roomWidthRange: [3, 6], roomHeightRange: [3, 5], secretMax: 2 },
+  4: { gridWidth: 28, gridHeight: 30, rooms: [11, 14], roomWidthRange: [3, 5], roomHeightRange: [3, 5], secretMax: 3 },
+  5: { gridWidth: 33, gridHeight: 36, rooms: [15, 19], roomWidthRange: [3, 5], roomHeightRange: [2, 4], secretMax: 4 },
+  6: { gridWidth: 38, gridHeight: 41, rooms: [20, 26], roomWidthRange: [2, 5], roomHeightRange: [2, 4], secretMax: 5 }
 };
 
 /** Room-placement rejection sampling: overall floor and per-room try budget. */
@@ -121,20 +121,20 @@ const VALID_MODES: ReadonlySet<string> = new Set(['empty', 'full', 'detailed']);
 /* ---------------- internal shapes ---------------- */
 
 interface GridPoint {
-  x: number;
-  y: number;
+  gridX: number;
+  gridY: number;
 }
 
 export interface GridRect {
-  x: number;
-  y: number;
-  w: number;
-  h: number;
+  gridX: number;
+  gridY: number;
+  width: number;
+  height: number;
 }
 
 interface CenteredRect extends GridRect {
-  cx: number;
-  cy: number;
+  centerX: number;
+  centerY: number;
 }
 
 export interface InternalRoom extends CenteredRect {
@@ -153,7 +153,7 @@ export interface CarveSurface {
 
 interface TunnelCandidate {
   cells: GridPoint[];
-  len: number;
+  length: number;
   line: DungeonSecretPath;
 }
 
@@ -181,7 +181,7 @@ interface MarkerPlacement {
 
 /** Seed-derived randomness helpers; every step draws through this bundle. */
 export interface GenerationRandom {
-  next: RNG;
+  next: RandomNumberGenerator;
   intBetween(min: number, max: number): number;
   index(length: number): number;
   // Draws once even for an empty list (then yields undefined) — callers guard.
@@ -213,44 +213,44 @@ export const createLevelSpec = (requestedLevel?: number): ResolvedLevelSpec => {
   return { ...entry, level };
 };
 
-const cellKey = (x: number, y: number, gridWidth: number): number => y * gridWidth + x;
+const cellKey = (column: number, row: number, gridWidth: number): number => row * gridWidth + column;
 
 const createRockGrid = (gridWidth: number, gridHeight: number): FloorGrid => {
   const grid: FloorGrid = [];
-  for (let y = 0; y < gridHeight; y++) grid.push(new Array<number>(gridWidth).fill(FLOOR_ROCK));
+  for (let row = 0; row < gridHeight; row++) grid.push(new Array<number>(gridWidth).fill(FLOOR_ROCK));
   return grid;
 };
 
 /** True when the rects overlap or touch (kept 1 cell apart on placement). */
 const rectanglesTouch = (rectA: GridRect, rectB: GridRect): boolean =>
-  rectA.x - 1 < rectB.x + rectB.w && rectA.x + rectA.w + 1 > rectB.x &&
-  rectA.y - 1 < rectB.y + rectB.h && rectA.y + rectA.h + 1 > rectB.y;
+  rectA.gridX - 1 < rectB.gridX + rectB.width && rectA.gridX + rectA.width + 1 > rectB.gridX &&
+  rectA.gridY - 1 < rectB.gridY + rectB.height && rectA.gridY + rectA.height + 1 > rectB.gridY;
 
 const distanceBetween = (rectA: CenteredRect, rectB: CenteredRect): number => {
-  const deltaX = rectA.cx - rectB.cx, deltaY = rectA.cy - rectB.cy;
+  const deltaX = rectA.centerX - rectB.centerX, deltaY = rectA.centerY - rectB.centerY;
   return Math.sqrt(deltaX * deltaX + deltaY * deltaY);
 };
 
-const carveHorizontal = (surface: CarveSurface, xStart: number, xEnd: number, row: number): void => {
+const carveHorizontal = (surface: CarveSurface, columnStart: number, columnEnd: number, row: number): void => {
   const floorRow = surface.floor[row];
   if (!floorRow) return; // rows in [0, gridHeight) always exist
-  const start = Math.min(xStart, xEnd), end = Math.max(xStart, xEnd);
-  for (let x = start; x <= end; x++) {
-    if (floorRow[x] === FLOOR_ROCK) {
-      floorRow[x] = FLOOR_OPEN;
-      surface.corridorCells[cellKey(x, row, surface.gridWidth)] = true;
+  const start = Math.min(columnStart, columnEnd), end = Math.max(columnStart, columnEnd);
+  for (let column = start; column <= end; column++) {
+    if (floorRow[column] === FLOOR_ROCK) {
+      floorRow[column] = FLOOR_OPEN;
+      surface.corridorCells[cellKey(column, row, surface.gridWidth)] = true;
     }
   }
 };
 
-const carveVertical = (surface: CarveSurface, yStart: number, yEnd: number, column: number): void => {
-  const start = Math.min(yStart, yEnd), end = Math.max(yStart, yEnd);
-  for (let y = start; y <= end; y++) {
-    const floorRow = surface.floor[y];
+const carveVertical = (surface: CarveSurface, rowStart: number, rowEnd: number, column: number): void => {
+  const start = Math.min(rowStart, rowEnd), end = Math.max(rowStart, rowEnd);
+  for (let row = start; row <= end; row++) {
+    const floorRow = surface.floor[row];
     if (!floorRow) continue; // rows in [0, gridHeight) always exist
     if (floorRow[column] === FLOOR_ROCK) {
       floorRow[column] = FLOOR_OPEN;
-      surface.corridorCells[cellKey(column, y, surface.gridWidth)] = true;
+      surface.corridorCells[cellKey(column, row, surface.gridWidth)] = true;
     }
   }
 };
@@ -258,11 +258,11 @@ const carveVertical = (surface: CarveSurface, yStart: number, yEnd: number, colu
 /* ---------------- step 1: rooms ---------------- */
 
 export const placeRooms = (spec: ResolvedLevelSpec, random: GenerationRandom): { rooms: InternalRoom[]; floor: FloorGrid } => {
-  const gridWidth = spec.gw, gridHeight = spec.gh;
+  const gridWidth = spec.gridWidth, gridHeight = spec.gridHeight;
   const floor = createRockGrid(gridWidth, gridHeight);
   const rooms: InternalRoom[] = [];
   const overlapsExisting = (candidate: GridRect): boolean => {
-    if (candidate.x < 1 || candidate.y < 1 || candidate.x + candidate.w > gridWidth - 1 || candidate.y + candidate.h > gridHeight - 1) return true;
+    if (candidate.gridX < 1 || candidate.gridY < 1 || candidate.gridX + candidate.width > gridWidth - 1 || candidate.gridY + candidate.height > gridHeight - 1) return true;
     return rooms.some((existing) => rectanglesTouch(candidate, existing));
   };
   const targetRoomCount = random.intBetween(spec.rooms[0], spec.rooms[1]);
@@ -270,24 +270,24 @@ export const placeRooms = (spec: ResolvedLevelSpec, random: GenerationRandom): {
   let tries = 0;
   while (rooms.length < targetRoomCount && tries < maxTries) {
     tries++;
-    const roomWidth = random.intBetween(spec.rw[0], spec.rw[1]);
-    const roomHeight = random.intBetween(spec.rh[0], spec.rh[1]);
-    const x = random.intBetween(1, gridWidth - roomWidth - 1);
-    const y = random.intBetween(1, gridHeight - roomHeight - 1);
-    const candidate: GridRect = { x, y, w: roomWidth, h: roomHeight };
+    const roomWidth = random.intBetween(spec.roomWidthRange[0], spec.roomWidthRange[1]);
+    const roomHeight = random.intBetween(spec.roomHeightRange[0], spec.roomHeightRange[1]);
+    const gridX = random.intBetween(1, gridWidth - roomWidth - 1);
+    const gridY = random.intBetween(1, gridHeight - roomHeight - 1);
+    const candidate: GridRect = { gridX, gridY, width: roomWidth, height: roomHeight };
     if (overlapsExisting(candidate)) continue;
     rooms.push({
       ...candidate,
-      cx: Math.floor(candidate.x + candidate.w / 2),
-      cy: Math.floor(candidate.y + candidate.h / 2),
+      centerX: Math.floor(candidate.gridX + candidate.width / 2),
+      centerY: Math.floor(candidate.gridY + candidate.height / 2),
       id: rooms.length,
     });
   }
   rooms.forEach((room) => {
-    for (let y = room.y; y < room.y + room.h; y++) {
-      const floorRow = floor[y];
+    for (let row = room.gridY; row < room.gridY + room.height; row++) {
+      const floorRow = floor[row];
       if (!floorRow) continue; // room rects are placed within grid bounds
-      for (let x = room.x; x < room.x + room.w; x++) floorRow[x] = FLOOR_OPEN;
+      for (let column = room.gridX; column < room.gridX + room.width; column++) floorRow[column] = FLOOR_OPEN;
     }
   });
   return { rooms, floor };
@@ -302,11 +302,11 @@ const carveCorridors = (rooms: InternalRoom[], surface: CarveSurface, random: Ge
   const connectedPairs: Record<string, boolean> = {};
   const connectRooms = (roomA: InternalRoom, roomB: InternalRoom): void => {
     if (random.chance(0.5)) {
-      carveHorizontal(surface, roomA.cx, roomB.cx, roomA.cy);
-      carveVertical(surface, roomA.cy, roomB.cy, roomB.cx);
+      carveHorizontal(surface, roomA.centerX, roomB.centerX, roomA.centerY);
+      carveVertical(surface, roomA.centerY, roomB.centerY, roomB.centerX);
     } else {
-      carveVertical(surface, roomA.cy, roomB.cy, roomA.cx);
-      carveHorizontal(surface, roomA.cx, roomB.cx, roomB.cy);
+      carveVertical(surface, roomA.centerY, roomB.centerY, roomA.centerX);
+      carveHorizontal(surface, roomA.centerX, roomB.centerX, roomB.centerY);
     }
     connectedPairs[pairKey(roomA.id, roomB.id)] = true;
   };
@@ -352,32 +352,32 @@ const countMarkersOfType = (markers: DungeonMarker[], markerType: string): numbe
 
 const pickFreeCell = (placement: MarkerPlacement, room: InternalRoom): GridPoint => {
   const cells: GridPoint[] = [];
-  for (let y = room.y; y < room.y + room.h; y++) for (let x = room.x; x < room.x + room.w; x++) {
-    if (!placement.usedCells[cellKey(x, y, placement.gridWidth)]) cells.push({ x, y });
+  for (let row = room.gridY; row < room.gridY + room.height; row++) for (let column = room.gridX; column < room.gridX + room.width; column++) {
+    if (!placement.usedCells[cellKey(column, row, placement.gridWidth)]) cells.push({ gridX: column, gridY: row });
   }
-  const cell = (cells.length ? placement.random.pickFrom(cells) : undefined) ?? { x: room.cx, y: room.cy };
-  placement.usedCells[cellKey(cell.x, cell.y, placement.gridWidth)] = true;
+  const cell = (cells.length ? placement.random.pickFrom(cells) : undefined) ?? { gridX: room.centerX, gridY: room.centerY };
+  placement.usedCells[cellKey(cell.gridX, cell.gridY, placement.gridWidth)] = true;
   return cell;
 };
 
 const placeMarkerIn = (placement: MarkerPlacement, room: InternalRoom, markerType: string): void => {
   const cell = pickFreeCell(placement, room);
-  placement.markers.push({ type: markerType, x: cell.x, y: cell.y, room: room.id });
+  placement.markers.push({ type: markerType, gridX: cell.gridX, gridY: cell.gridY, roomId: room.id });
 };
 
 const distanceToEdge = (room: InternalRoom, gridWidth: number, gridHeight: number): number =>
-  Math.min(room.cx, gridWidth - 1 - room.cx, room.cy, gridHeight - 1 - room.cy);
+  Math.min(room.centerX, gridWidth - 1 - room.centerX, room.centerY, gridHeight - 1 - room.centerY);
 
 /** Carve a corridor from the room's center to the nearest map edge. */
-const carveCorridorToEdge = (surface: CarveSurface, room: InternalRoom): { x: number; y: number; dir: string } => {
-  const distanceLeft = room.cx, distanceRight = surface.gridWidth - 1 - room.cx;
-  const distanceTop = room.cy, distanceBottom = surface.gridHeight - 1 - room.cy;
+const carveCorridorToEdge = (surface: CarveSurface, room: InternalRoom): { gridX: number; gridY: number; direction: string } => {
+  const distanceLeft = room.centerX, distanceRight = surface.gridWidth - 1 - room.centerX;
+  const distanceTop = room.centerY, distanceBottom = surface.gridHeight - 1 - room.centerY;
   const nearest = Math.min(distanceLeft, distanceRight, distanceTop, distanceBottom);
-  if (nearest === distanceTop) { carveVertical(surface, 0, room.cy, room.cx); return { x: room.cx, y: 0, dir: 'down' }; }
-  if (nearest === distanceBottom) { carveVertical(surface, room.cy, surface.gridHeight - 1, room.cx); return { x: room.cx, y: surface.gridHeight - 1, dir: 'up' }; }
-  if (nearest === distanceLeft) { carveHorizontal(surface, 0, room.cx, room.cy); return { x: 0, y: room.cy, dir: 'right' }; }
-  carveHorizontal(surface, room.cx, surface.gridWidth - 1, room.cy);
-  return { x: surface.gridWidth - 1, y: room.cy, dir: 'left' };
+  if (nearest === distanceTop) { carveVertical(surface, 0, room.centerY, room.centerX); return { gridX: room.centerX, gridY: 0, direction: 'down' }; }
+  if (nearest === distanceBottom) { carveVertical(surface, room.centerY, surface.gridHeight - 1, room.centerX); return { gridX: room.centerX, gridY: surface.gridHeight - 1, direction: 'up' }; }
+  if (nearest === distanceLeft) { carveHorizontal(surface, 0, room.centerX, room.centerY); return { gridX: 0, gridY: room.centerY, direction: 'right' }; }
+  carveHorizontal(surface, room.centerX, surface.gridWidth - 1, room.centerY);
+  return { gridX: surface.gridWidth - 1, gridY: room.centerY, direction: 'left' };
 };
 
 /** Entrance/exit, boss + hoard, per-room spawns, minimum back-fill, traps. */
@@ -389,7 +389,7 @@ const placeMarkers = (rooms: InternalRoom[], surface: CarveSurface, random: Gene
     distanceToEdge(roomA, surface.gridWidth, surface.gridHeight) - distanceToEdge(roomB, surface.gridWidth, surface.gridHeight))[0];
   if (!entranceRoom) return markers; // no rooms → no markers to place
   const entranceCell = carveCorridorToEdge(surface, entranceRoom);
-  markers.push({ type: 'entrance', x: entranceCell.x, y: entranceCell.y, dir: entranceCell.dir });
+  markers.push({ type: 'entrance', gridX: entranceCell.gridX, gridY: entranceCell.gridY, direction: entranceCell.direction });
 
   // rooms is non-empty here (entranceRoom exists), so the fallbacks never fire.
   let bossRoom = rooms.slice().sort((roomA, roomB) => distanceBetween(roomB, entranceRoom) - distanceBetween(roomA, entranceRoom))[0] ?? entranceRoom;
@@ -397,7 +397,7 @@ const placeMarkers = (rooms: InternalRoom[], surface: CarveSurface, random: Gene
   placeMarkerIn(placement, bossRoom, 'boss');
   if (random.chance(BOSS_TREASURE_CHANCE)) placeMarkerIn(placement, bossRoom, 'treasure');
   const exitCell = carveCorridorToEdge(surface, bossRoom);
-  markers.push({ type: 'exit', x: exitCell.x, y: exitCell.y, dir: exitCell.dir });
+  markers.push({ type: 'exit', gridX: exitCell.gridX, gridY: exitCell.gridY, direction: exitCell.direction });
 
   const otherRooms = rooms.filter((room) => room !== entranceRoom && room !== bossRoom);
   otherRooms.forEach((room) => {
@@ -415,11 +415,11 @@ const placeMarkers = (rooms: InternalRoom[], surface: CarveSurface, random: Gene
 
   const corridorCellList: GridPoint[] = Object.keys(surface.corridorCells).map((key) => {
     const numericKey = +key;
-    return { x: numericKey % surface.gridWidth, y: Math.floor(numericKey / surface.gridWidth) };
+    return { gridX: numericKey % surface.gridWidth, gridY: Math.floor(numericKey / surface.gridWidth) };
   });
   random.shuffleInPlace(corridorCellList)
     .slice(0, random.intBetween(TRAP_COUNT_MIN, TRAP_COUNT_MAX))
-    .forEach((cell) => { markers.push({ type: 'trap', x: cell.x, y: cell.y }); });
+    .forEach((cell) => { markers.push({ type: 'trap', gridX: cell.gridX, gridY: cell.gridY }); });
 
   return markers;
 };
@@ -431,44 +431,44 @@ const placeMarkers = (rooms: InternalRoom[], surface: CarveSurface, random: Gene
 
 const findHorizontalTunnel = (floor: FloorGrid, rectA: GridRect, rectB: GridRect): TunnelCandidate | null => {
   // their row ranges overlap, rock columns lie between them
-  const overlapTop = Math.max(rectA.y, rectB.y), overlapBottom = Math.min(rectA.y + rectA.h, rectB.y + rectB.h) - 1;
+  const overlapTop = Math.max(rectA.gridY, rectB.gridY), overlapBottom = Math.min(rectA.gridY + rectA.height, rectB.gridY + rectB.height) - 1;
   if (overlapTop > overlapBottom) return null;
-  const leftRect = rectA.x < rectB.x ? rectA : rectB, rightRect = rectA.x < rectB.x ? rectB : rectA;
-  const tunnelStartX = leftRect.x + leftRect.w, tunnelEndX = rightRect.x - 1;
-  if (tunnelStartX > tunnelEndX) return null;
+  const leftRect = rectA.gridX < rectB.gridX ? rectA : rectB, rightRect = rectA.gridX < rectB.gridX ? rectB : rectA;
+  const tunnelStartColumn = leftRect.gridX + leftRect.width, tunnelEndColumn = rightRect.gridX - 1;
+  if (tunnelStartColumn > tunnelEndColumn) return null;
   const candidateRows: number[] = [];
-  for (let y = overlapTop; y <= overlapBottom; y++) candidateRows.push(y);
+  for (let row = overlapTop; row <= overlapBottom; row++) candidateRows.push(row);
   const middleRow = (overlapTop + overlapBottom) / 2;
   candidateRows.sort((rowA, rowB) => Math.abs(rowA - middleRow) - Math.abs(rowB - middleRow));
   for (const row of candidateRows) {
     let clear = true;
-    for (let x = tunnelStartX; x <= tunnelEndX; x++) { if (floor[row]?.[x] === FLOOR_OPEN) { clear = false; break; } }
+    for (let column = tunnelStartColumn; column <= tunnelEndColumn; column++) { if (floor[row]?.[column] === FLOOR_OPEN) { clear = false; break; } }
     if (!clear) continue;
     const cells: GridPoint[] = [];
-    for (let x = tunnelStartX; x <= tunnelEndX; x++) cells.push({ x, y: row });
-    return { cells, len: cells.length, line: { x1: leftRect.x + leftRect.w - 1, y1: row, x2: rightRect.x, y2: row } };
+    for (let column = tunnelStartColumn; column <= tunnelEndColumn; column++) cells.push({ gridX: column, gridY: row });
+    return { cells, length: cells.length, line: { startX: leftRect.gridX + leftRect.width - 1, startY: row, endX: rightRect.gridX, endY: row } };
   }
   return null;
 };
 
 const findVerticalTunnel = (floor: FloorGrid, rectA: GridRect, rectB: GridRect): TunnelCandidate | null => {
   // their column ranges overlap, rock rows lie between them
-  const overlapLeft = Math.max(rectA.x, rectB.x), overlapRight = Math.min(rectA.x + rectA.w, rectB.x + rectB.w) - 1;
+  const overlapLeft = Math.max(rectA.gridX, rectB.gridX), overlapRight = Math.min(rectA.gridX + rectA.width, rectB.gridX + rectB.width) - 1;
   if (overlapLeft > overlapRight) return null;
-  const topRect = rectA.y < rectB.y ? rectA : rectB, bottomRect = rectA.y < rectB.y ? rectB : rectA;
-  const tunnelStartY = topRect.y + topRect.h, tunnelEndY = bottomRect.y - 1;
-  if (tunnelStartY > tunnelEndY) return null;
+  const topRect = rectA.gridY < rectB.gridY ? rectA : rectB, bottomRect = rectA.gridY < rectB.gridY ? rectB : rectA;
+  const tunnelStartRow = topRect.gridY + topRect.height, tunnelEndRow = bottomRect.gridY - 1;
+  if (tunnelStartRow > tunnelEndRow) return null;
   const candidateColumns: number[] = [];
-  for (let x = overlapLeft; x <= overlapRight; x++) candidateColumns.push(x);
+  for (let column = overlapLeft; column <= overlapRight; column++) candidateColumns.push(column);
   const middleColumn = (overlapLeft + overlapRight) / 2;
   candidateColumns.sort((columnA, columnB) => Math.abs(columnA - middleColumn) - Math.abs(columnB - middleColumn));
   for (const column of candidateColumns) {
     let clear = true;
-    for (let y = tunnelStartY; y <= tunnelEndY; y++) { if (floor[y]?.[column] === FLOOR_OPEN) { clear = false; break; } }
+    for (let row = tunnelStartRow; row <= tunnelEndRow; row++) { if (floor[row]?.[column] === FLOOR_OPEN) { clear = false; break; } }
     if (!clear) continue;
     const cells: GridPoint[] = [];
-    for (let y = tunnelStartY; y <= tunnelEndY; y++) cells.push({ x: column, y });
-    return { cells, len: cells.length, line: { x1: column, y1: topRect.y + topRect.h - 1, x2: column, y2: bottomRect.y } };
+    for (let row = tunnelStartRow; row <= tunnelEndRow; row++) cells.push({ gridX: column, gridY: row });
+    return { cells, length: cells.length, line: { startX: column, startY: topRect.gridY + topRect.height - 1, endX: column, endY: bottomRect.gridY } };
   }
   return null;
 };
@@ -482,15 +482,15 @@ export const findStraightTunnel = (floor: FloorGrid, rectA: GridRect, rectB: Gri
   const vertical = findVerticalTunnel(floor, rectA, rectB);
   if (vertical) candidates.push(vertical);
   if (!candidates.length) return null;
-  candidates.sort((candidateA, candidateB) => candidateA.len - candidateB.len);
+  candidates.sort((candidateA, candidateB) => candidateA.length - candidateB.length);
   return candidates[0] ?? null; // candidates is non-empty here
 };
 
 const commitTunnel = (carving: SecretCarving, tunnel: TunnelCandidate): void => {
-  tunnel.cells.forEach((cell) => { const secretRow = carving.secretFloor[cell.y]; if (secretRow) secretRow[cell.x] = FLOOR_OPEN; });
-  carving.secretPaths.push({ x1: tunnel.line.x1, y1: tunnel.line.y1, x2: tunnel.line.x2, y2: tunnel.line.y2 });
-  const middleCell = tunnel.cells[Math.floor((tunnel.cells.length - 1) / 2)] || { x: tunnel.line.x1, y: tunnel.line.y1 };
-  carving.markers.push({ type: 'secret', x: middleCell.x, y: middleCell.y });
+  tunnel.cells.forEach((cell) => { const secretRow = carving.secretFloor[cell.gridY]; if (secretRow) secretRow[cell.gridX] = FLOOR_OPEN; });
+  carving.secretPaths.push({ startX: tunnel.line.startX, startY: tunnel.line.startY, endX: tunnel.line.endX, endY: tunnel.line.endY });
+  const middleCell = tunnel.cells[Math.floor((tunnel.cells.length - 1) / 2)] || { gridX: tunnel.line.startX, gridY: tunnel.line.startY };
+  carving.markers.push({ type: 'secret', gridX: middleCell.gridX, gridY: middleCell.gridY });
 };
 
 /* hidden shortcut: link two UNCONNECTED rooms with a clear rock tunnel */
@@ -506,18 +506,18 @@ const addSecretShortcut = (carving: SecretCarving): boolean => {
     if (tunnel) candidates.push(tunnel);
   }
   if (!candidates.length) return false;
-  candidates.sort((candidateA, candidateB) => candidateA.len - candidateB.len);
+  candidates.sort((candidateA, candidateB) => candidateA.length - candidateB.length);
   const chosen = candidates[carving.random.index(Math.min(SECRET_SHORTCUT_NEAREST_POOL, candidates.length))];
   if (chosen) commitTunnel(carving, chosen); // index is within candidates
   return true;
 };
 
 const rectIsFree = (carving: SecretCarving, candidate: GridRect): boolean => {
-  if (candidate.x < 1 || candidate.y < 1 || candidate.x + candidate.w > carving.gridWidth - 1 || candidate.y + candidate.h > carving.gridHeight - 1) return false;
+  if (candidate.gridX < 1 || candidate.gridY < 1 || candidate.gridX + candidate.width > carving.gridWidth - 1 || candidate.gridY + candidate.height > carving.gridHeight - 1) return false;
   const allRooms: GridRect[] = [...carving.rooms, ...carving.secretRooms];
   if (allRooms.some((existing) => rectanglesTouch(candidate, existing))) return false;
-  for (let y = candidate.y; y < candidate.y + candidate.h; y++) for (let x = candidate.x; x < candidate.x + candidate.w; x++) {
-    if (carving.floor[y]?.[x] === FLOOR_OPEN) return false;
+  for (let row = candidate.gridY; row < candidate.gridY + candidate.height; row++) for (let column = candidate.gridX; column < candidate.gridX + candidate.width; column++) {
+    if (carving.floor[row]?.[column] === FLOOR_OPEN) return false;
   }
   return true;
 };
@@ -528,33 +528,33 @@ const addSecretRoom = (carving: SecretCarving): boolean => {
   for (let attempt = 0; attempt < SECRET_ROOM_PLACEMENT_TRIES; attempt++) {
     const roomWidth = random.intBetween(SECRET_ROOM_SIZE_MIN, SECRET_ROOM_SIZE_MAX);
     const roomHeight = random.intBetween(SECRET_ROOM_SIZE_MIN, SECRET_ROOM_SIZE_MAX);
-    const x = random.intBetween(1, carving.gridWidth - roomWidth - 1);
-    const y = random.intBetween(1, carving.gridHeight - roomHeight - 1);
-    const rect: GridRect = { x, y, w: roomWidth, h: roomHeight };
+    const gridX = random.intBetween(1, carving.gridWidth - roomWidth - 1);
+    const gridY = random.intBetween(1, carving.gridHeight - roomHeight - 1);
+    const rect: GridRect = { gridX, gridY, width: roomWidth, height: roomHeight };
     if (!rectIsFree(carving, rect)) continue;
     const candidate: CenteredRect = {
       ...rect,
-      cx: Math.floor(rect.x + rect.w / 2),
-      cy: Math.floor(rect.y + rect.h / 2),
+      centerX: Math.floor(rect.gridX + rect.width / 2),
+      centerY: Math.floor(rect.gridY + rect.height / 2),
     };
     const nearestRooms = carving.rooms.slice().sort((roomA, roomB) => distanceBetween(roomA, candidate) - distanceBetween(roomB, candidate));
     let tunnel: TunnelCandidate | null = null;
     for (const room of nearestRooms) { tunnel = findStraightTunnel(carving.floor, candidate, room); if (tunnel) break; }
     if (!tunnel) continue;
-    for (let cellY = candidate.y; cellY < candidate.y + candidate.h; cellY++) {
-      const secretRow = carving.secretFloor[cellY];
+    for (let cellRow = candidate.gridY; cellRow < candidate.gridY + candidate.height; cellRow++) {
+      const secretRow = carving.secretFloor[cellRow];
       if (!secretRow) continue; // secret rooms are placed within grid bounds
-      for (let cellX = candidate.x; cellX < candidate.x + candidate.w; cellX++) secretRow[cellX] = FLOOR_OPEN;
+      for (let cellColumn = candidate.gridX; cellColumn < candidate.gridX + candidate.width; cellColumn++) secretRow[cellColumn] = FLOOR_OPEN;
     }
-    carving.secretRooms.push({ x: candidate.x, y: candidate.y, w: candidate.w, h: candidate.h, cx: candidate.cx, cy: candidate.cy });
+    carving.secretRooms.push({ gridX: candidate.gridX, gridY: candidate.gridY, width: candidate.width, height: candidate.height, centerX: candidate.centerX, centerY: candidate.centerY });
     commitTunnel(carving, tunnel);
     // a secret room always hides a hoard; ~half the time something guards it
-    carving.markers.push({ type: 'treasure', x: candidate.cx, y: candidate.cy });
+    carving.markers.push({ type: 'treasure', gridX: candidate.centerX, gridY: candidate.centerY });
     if (random.chance(SECRET_GUARD_CHANCE)) {
       const guard = random.chance(SECRET_GUARD_BOSS_CHANCE) ? 'boss' : 'monster'; // sometimes an EXTRA boss, else a normal monster
-      const guardX = (candidate.x === candidate.cx) ? candidate.x + candidate.w - 1 : candidate.x; // a cell apart from the hoard
-      const guardY = (candidate.y === candidate.cy) ? candidate.y + candidate.h - 1 : candidate.y;
-      carving.markers.push({ type: guard, x: guardX, y: guardY });
+      const guardColumn = (candidate.gridX === candidate.centerX) ? candidate.gridX + candidate.width - 1 : candidate.gridX; // a cell apart from the hoard
+      const guardRow = (candidate.gridY === candidate.centerY) ? candidate.gridY + candidate.height - 1 : candidate.gridY;
+      carving.markers.push({ type: guard, gridX: guardColumn, gridY: guardRow });
     }
     return true;
   }
@@ -576,9 +576,9 @@ const carveSecrets = (
     connectedPairs,
     markers,
     random,
-    gridWidth: spec.gw,
-    gridHeight: spec.gh,
-    secretFloor: createRockGrid(spec.gw, spec.gh),
+    gridWidth: spec.gridWidth,
+    gridHeight: spec.gridHeight,
+    secretFloor: createRockGrid(spec.gridWidth, spec.gridHeight),
     secretPaths: [],
     secretRooms: [],
   };
@@ -612,53 +612,53 @@ const describeMoney = (genre: string, random: GenerationRandom): string => {
   return 'Money: ' + random.intBetween(5, 200);
 };
 
-const enrichMonsterMarker = (marker: DungeonMarker, context: RPGContext, random: GenerationRandom): void => {
-  marker.label = RPGGen.randomMonster(random.next, context) || 'Monster';
+const enrichMonsterMarker = (marker: DungeonMarker, context: GenerationContext, random: GenerationRandom): void => {
+  marker.label = defaultContentGenerator.randomMonster(random.next, context) || 'Monster';
   marker.note = '(' + pickDifficulty(random).toLowerCase() + ')';
   if (random.chance(MONSTER_DESCRIPTION_CHANCE)) {
     const description = random.chance(TONE_ADJECTIVE_CHANCE)
-      ? RPGGen.toneAdj(random.next, context, 'monster')
-      : RPGGen.toneDesc(random.next, context, 'monster');
+      ? defaultContentGenerator.toneAdjective(random.next, context, 'monster')
+      : defaultContentGenerator.toneDescription(random.next, context, 'monster');
     if (description) marker.note += ' ' + capitalizeFirst(description) + '.';
   }
 };
 
-const enrichBossMarker = (marker: DungeonMarker, context: RPGContext, bossCreaturePool: MonsterEntry[], random: GenerationRandom): void => {
-  const bossName = RPGGen.randomName(random.next, context);
+const enrichBossMarker = (marker: DungeonMarker, context: GenerationContext, bossCreaturePool: MonsterEntry[], random: GenerationRandom): void => {
+  const bossName = defaultContentGenerator.randomName(random.next, context);
   const creatureEntry = random.pickFrom(bossCreaturePool);
-  const creatureName = (creatureEntry && creatureEntry.n) || 'Beast';
+  const creatureName = (creatureEntry && creatureEntry.name) || 'Beast';
   const useName = !!bossName && random.chance(BOSS_NAMED_CHANCE);
   marker.label = useName && bossName ? bossName : creatureName; // a named villain OR a creature, never "Name the Creature"
   marker.note = '(boss)';
   const bossCategory = useName ? 'person' : 'monster';
   if (random.chance(BOSS_DESCRIPTION_CHANCE)) {
     const description = random.chance(TONE_ADJECTIVE_CHANCE)
-      ? RPGGen.toneAdj(random.next, context, bossCategory)
-      : RPGGen.toneDesc(random.next, context, bossCategory);
+      ? defaultContentGenerator.toneAdjective(random.next, context, bossCategory)
+      : defaultContentGenerator.toneDescription(random.next, context, bossCategory);
     if (description) marker.note += ' ' + capitalizeFirst(description) + '.';
   }
 };
 
-const enrichTreasureMarker = (marker: DungeonMarker, context: RPGContext, random: GenerationRandom): void => {
+const enrichTreasureMarker = (marker: DungeonMarker, context: GenerationContext, random: GenerationRandom): void => {
   marker.label = 'Treasure';
-  const parts: Array<string | null> = [RPGGen.randomItem(random.next, context) || 'a trinket'];
-  if (random.chance(TREASURE_EXTRA_ITEM_CHANCE)) parts.push(RPGGen.randomItem(random.next, context));
+  const parts: Array<string | null> = [defaultContentGenerator.randomItem(random.next, context) || 'a trinket'];
+  if (random.chance(TREASURE_EXTRA_ITEM_CHANCE)) parts.push(defaultContentGenerator.randomItem(random.next, context));
   if (random.chance(TREASURE_MONEY_CHANCE)) parts.push(describeMoney(context.genre, random));
   marker.note = parts.filter(Boolean).join(', ') + '.';
 };
 
-const enrichTrapMarker = (marker: DungeonMarker, context: RPGContext, random: GenerationRandom): void => {
-  marker.label = RPGGen.randomTrap(random.next, context) || 'Trap';
+const enrichTrapMarker = (marker: DungeonMarker, context: GenerationContext, random: GenerationRandom): void => {
+  marker.label = defaultContentGenerator.randomTrap(random.next, context) || 'Trap';
   marker.note = '';
 };
 
 /* 'detailed' mode: name & classify every foe, hoard and trap from the random
    lists. Enrichment is a per-kind lookup: markers of kinds without an enricher
    (including consumer-defined kinds) pass through untouched and draw nothing. */
-const enrichDetailed = (markers: DungeonMarker[], context: RPGContext, random: GenerationRandom): void => {
-  const monstersByGenre: GenreMap<MonsterEntry> = RPG.monsters;
+const enrichDetailed = (markers: DungeonMarker[], context: GenerationContext, random: GenerationRandom): void => {
+  const monstersByGenre: GenreMap<MonsterEntry> = defaultContent.monsters;
   const bossCreaturePool = (monstersByGenre[context.genre] || []).concat(monstersByGenre.generic || [])
-    .filter((monster) => !monster.a); // bosses are never animals
+    .filter((monster) => !monster.isAnimal); // bosses are never animals
   const enrichersByKind: Partial<Record<KnownMarkerType, (marker: DungeonMarker) => void>> = {
     monster: (marker) => enrichMonsterMarker(marker, context, random),
     boss: (marker) => enrichBossMarker(marker, context, bossCreaturePool, random),
@@ -670,19 +670,19 @@ const enrichDetailed = (markers: DungeonMarker[], context: RPGContext, random: G
     const enrich = enrichersByKind[marker.type as KnownMarkerType];
     if (!enrich) return;
     enrich(marker);
-    marker.seq = sequenceNumber++;
+    marker.sequence = sequenceNumber++;
   });
 };
 
 /* ---------------- step 6: name & flavor ---------------- */
 
-const pickNameAndFlavor = (context: RPGContext | null, random: GenerationRandom): { name: string | null; flavor: string | null } => {
+const pickNameAndFlavor = (context: GenerationContext | null, random: GenerationRandom): { name: string | null; flavor: string | null } => {
   if (!context) return { name: null, flavor: null };
   let name: string | null = null, flavor: string | null = null;
-  const location = RPGGen.randomLocation(random.next, context);
+  const location = defaultContentGenerator.randomLocation(random.next, context);
   if (location) name = (/^the\b/i.test(location) ? '' : 'The ') + location;
   const flavorCategory = random.pickFrom(['place', 'sound', 'building']) ?? 'place';
-  const flavorDescription = RPGGen.toneDesc(random.next, context, flavorCategory) || RPGGen.toneDesc(random.next, context, 'place');
+  const flavorDescription = defaultContentGenerator.toneDescription(random.next, context, flavorCategory) || defaultContentGenerator.toneDescription(random.next, context, 'place');
   if (flavorDescription) flavor = capitalizeFirst(flavorDescription) + '.';
   return { name, flavor };
 };
@@ -703,7 +703,7 @@ export interface SecretFeatures {
  * - `carveCorridors`: mutates `surface` so every room is reachable; returns the connected room-id pairs.
  * - `placeMarkers`: markers land on open (or here-carved) cells; may carve entrance/exit corridors on `surface`.
  * - `carveSecrets`: secret geometry only in ROCK cells of `floor`, recorded solely on the returned secret grid.
- * - `enrichMarkers`: mutates markers in place (labels/notes/seq); unknown kinds untouched.
+ * - `enrichMarkers`: mutates markers in place (labels/notes/sequence); unknown kinds untouched.
  * - `pickNameAndFlavor`: pure; null fields fall back to the generator's stock name/flavor.
  *
  * Customize a single step by spreading the default:
@@ -721,8 +721,8 @@ export interface DungeonStrategy {
     markers: DungeonMarker[],
     random: GenerationRandom,
   ): SecretFeatures;
-  enrichMarkers(markers: DungeonMarker[], context: RPGContext, random: GenerationRandom): void;
-  pickNameAndFlavor(context: RPGContext | null, random: GenerationRandom): { name: string | null; flavor: string | null };
+  enrichMarkers(markers: DungeonMarker[], context: GenerationContext, random: GenerationRandom): void;
+  pickNameAndFlavor(context: GenerationContext | null, random: GenerationRandom): { name: string | null; flavor: string | null };
 }
 
 /** The built-in algorithm — spread it to override individual steps. */
@@ -752,15 +752,15 @@ export function generateDungeon(
   const random = createGenerationRandom(safeSeed);
 
   const { rooms, floor } = strategy.placeRooms(spec, random);
-  const surface: CarveSurface = { floor, corridorCells: {}, gridWidth: spec.gw, gridHeight: spec.gh };
+  const surface: CarveSurface = { floor, corridorCells: {}, gridWidth: spec.gridWidth, gridHeight: spec.gridHeight };
   const connectedPairs = strategy.carveCorridors(rooms, surface, random);
 
   const markers: DungeonMarker[] = safeMode !== 'empty' ? strategy.placeMarkers(rooms, surface, random) : [];
   const { secretPaths, secretRooms, secretFloor } = safeMode !== 'empty'
     ? strategy.carveSecrets(rooms, floor, connectedPairs, spec, markers, random)
-    : { secretPaths: [], secretRooms: [], secretFloor: createRockGrid(spec.gw, spec.gh) };
+    : { secretPaths: [], secretRooms: [], secretFloor: createRockGrid(spec.gridWidth, spec.gridHeight) };
 
-  const contentContext: RPGContext | null = RPGGen ? RPGGen.context(random.next) : null;
+  const contentContext: GenerationContext | null = defaultContentGenerator ? defaultContentGenerator.context(random.next) : null;
   if (safeMode === 'detailed' && contentContext) strategy.enrichMarkers(markers, contentContext, random);
   const { name, flavor } = strategy.pickNameAndFlavor(contentContext, random);
 
@@ -773,8 +773,8 @@ export function generateDungeon(
     flavor: flavor || 'Beyond the torchlight, the map runs dark.',
     genre: (safeMode === 'detailed' && contentContext) ? contentContext.genre : null,
     tone: (safeMode === 'detailed' && contentContext) ? contentContext.tone : null,
-    grid: { gw: spec.gw, gh: spec.gh, cell: CELL_PIXELS },
-    rooms: rooms.map((room) => ({ x: room.x, y: room.y, w: room.w, h: room.h, id: room.id })),
+    grid: { width: spec.gridWidth, height: spec.gridHeight, cellSize: CELL_PIXELS },
+    rooms: rooms.map((room) => ({ gridX: room.gridX, gridY: room.gridY, width: room.width, height: room.height, id: room.id })),
     floor,
     markers,
     secretPaths,

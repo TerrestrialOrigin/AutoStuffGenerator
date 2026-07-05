@@ -11,12 +11,12 @@ import type { DungeonMarker } from './dungeon-types';
 function fixedRoomStep(): DungeonStrategy['placeRooms'] {
   return (spec) => {
     const rooms: InternalRoom[] = [
-      { x: 2, y: 2, w: 4, h: 4, cx: 4, cy: 4, id: 0 },
-      { x: 15, y: 18, w: 5, h: 4, cx: 17, cy: 20, id: 1 },
+      { gridX: 2, gridY: 2, width: 4, height: 4, centerX: 4, centerY: 4, id: 0 },
+      { gridX: 15, gridY: 18, width: 5, height: 4, centerX: 17, centerY: 20, id: 1 },
     ];
-    const floor: FloorGrid = Array.from({ length: spec.gh }, () => new Array<number>(spec.gw).fill(0));
+    const floor: FloorGrid = Array.from({ length: spec.gridHeight }, () => new Array<number>(spec.gridWidth).fill(0));
     for (const room of rooms) {
-      for (let y = room.y; y < room.y + room.h; y++) { const floorRow = floor[y]; if (floorRow) for (let x = room.x; x < room.x + room.w; x++) floorRow[x] = 1; }
+      for (let y = room.gridY; y < room.gridY + room.height; y++) { const floorRow = floor[y]; if (floorRow) for (let x = room.gridX; x < room.gridX + room.width; x++) floorRow[x] = 1; }
     }
     return { rooms, floor };
   };
@@ -27,8 +27,8 @@ describe('DungeonStrategy — custom steps are used by generateDungeon', () => {
     const strategy: DungeonStrategy = { ...defaultDungeonStrategy, placeRooms: fixedRoomStep() };
     const dungeon = generateDungeon(123, 3, 'full', strategy);
     expect(dungeon.rooms).toEqual([
-      { x: 2, y: 2, w: 4, h: 4, id: 0 },
-      { x: 15, y: 18, w: 5, h: 4, id: 1 },
+      { gridX: 2, gridY: 2, width: 4, height: 4, id: 0 },
+      { gridX: 15, gridY: 18, width: 5, height: 4, id: 1 },
     ]);
   });
 
@@ -65,7 +65,7 @@ describe('DungeonStrategy — custom steps are used by generateDungeon', () => {
 
 describe('marker kinds — unknown kinds pass through enrichment untouched', () => {
   it('leaves a consumer-defined marker kind unmodified in detailed mode', () => {
-    const customMarker: DungeonMarker = { type: 'other', x: 1, y: 1, note: 'left alone' };
+    const customMarker: DungeonMarker = { type: 'other', gridX: 1, gridY: 1, note: 'left alone' };
     const strategy: DungeonStrategy = {
       ...defaultDungeonStrategy,
       placeMarkers: (rooms, surface, random) => {
@@ -76,15 +76,15 @@ describe('marker kinds — unknown kinds pass through enrichment untouched', () 
     };
     const dungeon = generateDungeon(77, 3, 'detailed', strategy);
     const passedThrough = dungeon.markers.find((marker) => marker.type === 'other');
-    expect(passedThrough).toEqual({ type: 'other', x: 1, y: 1, note: 'left alone' });
-    expect(passedThrough?.seq).toBeUndefined();
+    expect(passedThrough).toEqual({ type: 'other', gridX: 1, gridY: 1, note: 'left alone' });
+    expect(passedThrough?.sequence).toBeUndefined();
     expect(passedThrough?.label).toBeUndefined();
     // known kinds around it were still enriched and sequenced
-    expect(dungeon.markers.some((marker) => marker.type === 'monster' && marker.label && marker.seq != null)).toBe(true);
+    expect(dungeon.markers.some((marker) => marker.type === 'monster' && marker.label && marker.sequence != null)).toBe(true);
   });
 
   it('accepts consumer-defined kind strings at compile time', () => {
-    const marker: DungeonMarker = { type: 'other', x: 0, y: 0 };
+    const marker: DungeonMarker = { type: 'other', gridX: 0, gridY: 0 };
     expect(marker.type).toBe('other');
   });
 });

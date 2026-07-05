@@ -22,8 +22,8 @@ import {
   BASELINE_DUNGEON_LEVELS,
   BASELINE_DUNGEON_MODES,
   BASELINE_DUNGEON_SEEDS,
-  BASELINE_RPGGEN_SEEDS,
-  captureRpgGenSequence,
+  BASELINE_CONTENT_GENERATOR_SEEDS,
+  captureContentGeneratorSequence,
   dungeonBaselineKey,
 } from '../src/golden-baseline-matrix';
 import { generateDungeon } from '../src/dungeon';
@@ -40,12 +40,12 @@ for (const seed of BASELINE_DUNGEON_SEEDS) {
   }
 }
 
-const rpgGenSequences: Record<string, unknown[]> = {};
-for (const seed of BASELINE_RPGGEN_SEEDS) {
-  rpgGenSequences[String(seed)] = captureRpgGenSequence(seed);
+const contentGeneratorSequences: Record<string, unknown[]> = {};
+for (const seed of BASELINE_CONTENT_GENERATOR_SEEDS) {
+  contentGeneratorSequences[String(seed)] = captureContentGeneratorSequence(seed);
 }
 
-const baseline = { dungeonHashes, rpgGenSequences };
+const baseline = { dungeonHashes, contentGeneratorSequences };
 if (!existsSync(join(process.cwd(), 'src'))) {
   throw new Error('Run from the auto-stuff-generator repo root (no src/ directory here).');
 }
@@ -54,5 +54,5 @@ mkdirSync(dirname(outputPath), { recursive: true });
 writeFileSync(outputPath, JSON.stringify(baseline, null, 2) + '\n');
 console.log(
   `Wrote ${Object.keys(dungeonHashes).length} dungeon hashes and ` +
-  `${Object.keys(rpgGenSequences).length} RPGGen sequences to ${outputPath}`,
+  `${Object.keys(contentGeneratorSequences).length} content-generator sequences to ${outputPath}`,
 );

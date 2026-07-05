@@ -9,7 +9,7 @@ import { titles } from './titles';
 import { tones } from './tones';
 import { traps } from './traps';
 
-export const RPG = {
+export const defaultContent = {
   activities,
   loot,
   monsters,
@@ -21,4 +21,4 @@ export const RPG = {
   traps,
 } satisfies ContentSource;
 
-export type RPGData = typeof RPG;
+export type ContentData = typeof defaultContent;
