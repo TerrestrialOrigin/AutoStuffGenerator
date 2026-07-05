@@ -36,7 +36,7 @@ function floodFill(
 
 function firstOpenCell(dungeon: DungeonResult): [number, number] | null {
   for (let y = 0; y < dungeon.grid.gh; y++) for (let x = 0; x < dungeon.grid.gw; x++) {
-    if (dungeon.floor[y][x] === 1) return [x, y];
+    if (dungeon.floor[y]?.[x] === 1) return [x, y];
   }
   return null;
 }
@@ -180,6 +180,7 @@ describe('generateDungeon — back-fill room selection is seed-randomized', () =
       const entranceRoom = roomsWithCenters
         .slice()
         .sort((first, second) => edgeDistance(first) - edgeDistance(second))[0];
+      if (!entranceRoom) continue;
       // The main boss marker is placed via a room and carries its room id.
       const bossMarker = dungeon.markers.find(
         (marker) => marker.type === 'boss' && marker.room != null,
@@ -196,8 +197,9 @@ describe('generateDungeon — back-fill room selection is seed-randomized', () =
           .map((marker) => marker.room),
       );
       dungeonsMeasured++;
-      if (roomsHoldingMonsters.has(otherRooms[0].id)) firstRoomMonsterCount++;
-      if (roomsHoldingMonsters.has(otherRooms[otherRooms.length - 1].id)) lastRoomMonsterCount++;
+      const firstOtherRoom = otherRooms[0], lastOtherRoom = otherRooms[otherRooms.length - 1];
+      if (firstOtherRoom && roomsHoldingMonsters.has(firstOtherRoom.id)) firstRoomMonsterCount++;
+      if (lastOtherRoom && roomsHoldingMonsters.has(lastOtherRoom.id)) lastRoomMonsterCount++;
     }
 
     expect(dungeonsMeasured).toBeGreaterThan(300);
@@ -225,8 +227,8 @@ describe('generateDungeon — structural invariants', () => {
         expect(marker.y).toBeGreaterThanOrEqual(0);
         expect(marker.x).toBeLessThan(gridWidth);
         expect(marker.y).toBeLessThan(gridHeight);
-        const onNormalFloor = dungeon.floor[marker.y][marker.x] === 1;
-        const onSecretFloor = !!dungeon.secretFloor && dungeon.secretFloor[marker.y][marker.x] === 1;
+        const onNormalFloor = dungeon.floor[marker.y]?.[marker.x] === 1;
+        const onSecretFloor = !!dungeon.secretFloor && dungeon.secretFloor[marker.y]?.[marker.x] === 1;
         expect(onNormalFloor || onSecretFloor).toBe(true);
       }
     }
@@ -240,10 +242,10 @@ describe('generateDungeon — structural invariants', () => {
       if (!start) continue;
       let openCellCount = 0;
       for (let y = 0; y < gridHeight; y++) for (let x = 0; x < gridWidth; x++) {
-        if (dungeon.floor[y][x] === 1) openCellCount++;
+        if (dungeon.floor[y]?.[x] === 1) openCellCount++;
       }
       const reached = floodFill(
-        (x, y) => dungeon.floor[y][x] === 1,
+        (x, y) => dungeon.floor[y]?.[x] === 1,
         gridWidth, gridHeight, start[0], start[1],
       );
       expect(reached.size).toBe(openCellCount);
@@ -259,7 +261,7 @@ describe('generateDungeon — structural invariants', () => {
       const secretFloor = dungeon.secretFloor;
       // carve-level isolation: no cell is both normal floor and secret floor
       for (let y = 0; y < gridHeight; y++) for (let x = 0; x < gridWidth; x++) {
-        expect(dungeon.floor[y][x] === 1 && secretFloor[y][x] === 1).toBe(false);
+        expect(dungeon.floor[y]?.[x] === 1 && secretFloor[y]?.[x] === 1).toBe(false);
       }
       // combined floor is fully connected: every secret room is reachable
       // from the normal floor once secret-tunnel cells are included
@@ -267,7 +269,7 @@ describe('generateDungeon — structural invariants', () => {
       expect(start).not.toBeNull();
       if (!start) continue;
       const reached = floodFill(
-        (x, y) => dungeon.floor[y][x] === 1 || secretFloor[y][x] === 1,
+        (x, y) => dungeon.floor[y]?.[x] === 1 || secretFloor[y]?.[x] === 1,
         gridWidth, gridHeight, start[0], start[1],
       );
       for (const secretRoom of dungeon.secretRooms) {
@@ -291,7 +293,7 @@ describe('generation steps — direct helper contracts', () => {
       expect(room.x + room.w).toBeLessThanOrEqual(spec.gw - 1);
       expect(room.y + room.h).toBeLessThanOrEqual(spec.gh - 1);
       for (let y = room.y; y < room.y + room.h; y++) for (let x = room.x; x < room.x + room.w; x++) {
-        expect(floor[y][x]).toBe(1);
+        expect(floor[y]?.[x]).toBe(1);
       }
     }
     for (const roomA of rooms) for (const roomB of rooms) {
@@ -309,7 +311,7 @@ describe('generation steps — direct helper contracts', () => {
     const leftRoom = { x: 1, y: 2, w: 2, h: 3 };
     const rightRoom = { x: 7, y: 2, w: 2, h: 3 };
     for (const room of [leftRoom, rightRoom]) {
-      for (let y = room.y; y < room.y + room.h; y++) for (let x = room.x; x < room.x + room.w; x++) floor[y][x] = 1;
+      for (let y = room.y; y < room.y + room.h; y++) { const floorRow = floor[y]; if (floorRow) for (let x = room.x; x < room.x + room.w; x++) floorRow[x] = 1; }
     }
     const tunnel = findStraightTunnel(floor, leftRoom, rightRoom);
     expect(tunnel).not.toBeNull();
@@ -317,7 +319,7 @@ describe('generation steps — direct helper contracts', () => {
     // every tunnel cell is rock, and the tunnel is a straight single row
     const rows = new Set(tunnel.cells.map((cell) => cell.y));
     expect(rows.size).toBe(1);
-    for (const cell of tunnel.cells) expect(floor[cell.y][cell.x]).toBe(0);
+    for (const cell of tunnel.cells) expect(floor[cell.y]?.[cell.x]).toBe(0);
     expect(tunnel.cells.map((cell) => cell.x)).toEqual([3, 4, 5, 6]);
   });
 
@@ -326,9 +328,9 @@ describe('generation steps — direct helper contracts', () => {
     const leftRoom = { x: 1, y: 2, w: 2, h: 3 };
     const rightRoom = { x: 7, y: 2, w: 2, h: 3 };
     for (const room of [leftRoom, rightRoom]) {
-      for (let y = room.y; y < room.y + room.h; y++) for (let x = room.x; x < room.x + room.w; x++) floor[y][x] = 1;
+      for (let y = room.y; y < room.y + room.h; y++) { const floorRow = floor[y]; if (floorRow) for (let x = room.x; x < room.x + room.w; x++) floorRow[x] = 1; }
     }
-    for (let y = 0; y < 7; y++) floor[y][5] = 1; // a corridor wall of open cells between them
+    for (let y = 0; y < 7; y++) { const floorRow = floor[y]; if (floorRow) floorRow[5] = 1; } // a corridor wall of open cells between them
     expect(findStraightTunnel(floor, leftRoom, rightRoom)).toBeNull();
   });
 });

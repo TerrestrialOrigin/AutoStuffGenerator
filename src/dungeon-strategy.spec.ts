@@ -16,7 +16,7 @@ function fixedRoomStep(): DungeonStrategy['placeRooms'] {
     ];
     const floor: FloorGrid = Array.from({ length: spec.gh }, () => new Array<number>(spec.gw).fill(0));
     for (const room of rooms) {
-      for (let y = room.y; y < room.y + room.h; y++) for (let x = room.x; x < room.x + room.w; x++) floor[y][x] = 1;
+      for (let y = room.y; y < room.y + room.h; y++) { const floorRow = floor[y]; if (floorRow) for (let x = room.x; x < room.x + room.w; x++) floorRow[x] = 1; }
     }
     return { rooms, floor };
   };

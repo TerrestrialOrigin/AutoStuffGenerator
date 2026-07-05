@@ -19,7 +19,7 @@ export const randomFrom = (rng?: RNG): number =>
  * Draws: exactly 1 when the list is non-empty, 0 otherwise.
  */
 export const pick = <ItemType>(rng: RNG | undefined, list: readonly ItemType[] | null | undefined): ItemType | null =>
-  (list && list.length) ? list[Math.floor(randomFrom(rng) * list.length)] : null;
+  (list && list.length) ? (list[Math.floor(randomFrom(rng) * list.length)] ?? null) : null;
 
 /** True with probability `probability`. Draws: exactly 1. */
 export const chance = (rng: RNG | undefined, probability: number): boolean =>
@@ -37,9 +37,13 @@ export const randomIndex = (rng: RNG, length: number): number =>
 export const shuffleInPlace = <ItemType>(rng: RNG, list: ItemType[]): ItemType[] => {
   for (let i = list.length - 1; i > 0; i--) {
     const j = randomIndex(rng, i + 1);
-    const swapped = list[i];
-    list[i] = list[j];
-    list[j] = swapped;
+    const atI = list[i];
+    const atJ = list[j];
+    // i > 0 and 0 <= j <= i < length, so both reads are in range; the guard is
+    // unreachable and exists only to satisfy noUncheckedIndexedAccess.
+    if (atI === undefined || atJ === undefined) continue;
+    list[i] = atJ;
+    list[j] = atI;
   }
   return list;
 };

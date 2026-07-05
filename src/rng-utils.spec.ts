@@ -3,7 +3,7 @@ import { chance, pick, randomFrom, randomIndex, randomInt, shuffleInPlace, capit
 /** An rng that counts its draws and yields a fixed cycle of values. */
 function countingRng(values: number[] = [0.5]): { rng: RNG; draws: () => number } {
   let drawCount = 0;
-  const rng = () => values[drawCount++ % values.length];
+  const rng = () => values[drawCount++ % values.length] ?? 0; // values is non-empty; index is always in range
   return { rng, draws: () => drawCount };
 }
 
