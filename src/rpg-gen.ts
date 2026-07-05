@@ -45,13 +45,11 @@ export const createRPGGen = (source: ContentSource = RPG) => {
   const monsterPool = (ctx: RPGContext, includeAnimals: boolean): MonsterEntry[] =>
     genrePool(source.monsters, ctx.genre).filter((monster) => !monster.a || includeAnimals || isVermin(monster.n));
 
-  /* FIXME(theme-pool): `names.given` is an ARRAY, so these keys are numeric
-     index strings, not theme names — a "themed" context therefore almost never
-     matches an entry's `theme`. Preserved verbatim (including the key filter)
-     because fixing it changes every seeded output; see golden-baseline.spec.ts.
-     Track as its own future bug-fix change. */
+  /* The distinct real cultural themes present in the name data, excluding the
+     always-matching 'generic' pool. (`theme` is a value on each entry, NOT a
+     key: `names.given` is an array, so Object.keys would yield array indices.) */
   const themePool = (): string[] =>
-    Object.keys(source.names.given).filter((key) => key !== 'generic' && key !== 'modern');
+    [...new Set(source.names.given.map((nameEntry) => nameEntry.theme))].filter((theme) => theme !== 'generic');
 
   /* one coherent context for a whole dungeon */
   const context = (rng?: RNG): RPGContext => {
