@@ -283,3 +283,69 @@ describe('monsterPool — animal filtering', () => {
     expect(pool).toEqual(['Troll', 'Giant Rat', 'Hawk', 'Bandit']);
   });
 });
+
+/* ------------------------------------------------------------------
+   DB-1: themePool must yield REAL cultural theme names, not numeric
+   array indices. A themed context (~15%) previously got ctx.theme
+   like '137' (an index into the names.given array), which matched no
+   entry's theme, so theme-strict names and theme-only titles silently
+   never resolved. These tests replicate that (they FAIL against the
+   Object.keys(names.given) implementation) and lock the fix.
+   ------------------------------------------------------------------ */
+import { RPG } from './data';
+
+describe('DB-1 — themePool yields real theme names, not array indices', () => {
+  /* The distinct real theme values present in the built-in name data,
+     excluding the always-matching 'generic' pool. */
+  const realThemes = new Set(
+    RPG.names.given.map((nameEntry) => nameEntry.theme).filter((theme) => theme !== 'generic'),
+  );
+
+  it('every themed context selects a real theme name (never a numeric index)', () => {
+    const engine = createRPGGen(RPG);
+    const themesSeen = new Set<string>();
+    for (let seed = 1; seed <= 400; seed++) {
+      const theme = engine.context(mulberry32(seed)).theme;
+      if (theme === null) continue;
+      themesSeen.add(theme);
+      expect(theme).not.toMatch(/^\d+$/);   // an array index like '0' / '137' is the bug
+      expect(realThemes.has(theme)).toBe(true);
+    }
+    // sanity: themed contexts actually occur across these seeds
+    expect(themesSeen.size).toBeGreaterThan(0);
+  });
+
+  it('a themed context can resolve a theme-matched title (not only generic fallbacks)', () => {
+    /* Single real theme in the data => every themed context picks 'celtic';
+       the only title is celtic-themed (no generic fallback), so it can ONLY
+       appear when ctx.theme is the real theme 'celtic'. */
+    const themedSource: ContentSource = {
+      monsters: { fantasy: [{ n: 'Gronk' }] },
+      names: {
+        given: [
+          { n: 'Generica', g: 'female', theme: 'generic', genre: 'fantasy' },
+          { n: 'Genericus', g: 'male', theme: 'generic', genre: 'fantasy' },
+          { n: 'Brigid', g: 'female', theme: 'celtic', genre: 'fantasy' },
+          { n: 'Cadogan', g: 'male', theme: 'celtic', genre: 'fantasy' },
+        ],
+        surname: [],
+      },
+      titles: [
+        { title: 'Ard Rí', category: 'nobility', theme: 'celtic', gender: 'neutral', placement: 'before' },
+      ],
+      tones: {}, loot: {}, places: {}, moods: [], activities: {}, traps: {},
+    };
+    const engine = createRPGGen(themedSource);
+
+    let sawCelticContext = false;
+    let sawCelticTitle = false;
+    for (let seed = 1; seed <= 400; seed++) {
+      const context = engine.context(mulberry32(seed));
+      if (context.theme === 'celtic') sawCelticContext = true;
+      const title = engine.randomTitle(mulberry32(seed), context, 'female');
+      if (title?.title === 'Ard Rí') sawCelticTitle = true;
+    }
+    expect(sawCelticContext).toBe(true);   // context selects the real theme
+    expect(sawCelticTitle).toBe(true);     // and the theme-matched title actually resolves
+  });
+});
