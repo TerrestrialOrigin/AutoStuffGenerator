@@ -18,15 +18,15 @@ import {
   BASELINE_DUNGEON_LEVELS,
   BASELINE_DUNGEON_MODES,
   BASELINE_DUNGEON_SEEDS,
-  BASELINE_RPGGEN_SEEDS,
-  captureRpgGenSequence,
+  BASELINE_CONTENT_GENERATOR_SEEDS,
+  captureContentGeneratorSequence,
   dungeonBaselineKey,
 } from './golden-baseline-matrix';
 import { generateDungeon } from './dungeon';
 
 interface GoldenBaseline {
   dungeonHashes: Record<string, string>;
-  rpgGenSequences: Record<string, unknown[]>;
+  contentGeneratorSequences: Record<string, unknown[]>;
 }
 
 const baseline: GoldenBaseline = JSON.parse(
@@ -52,8 +52,8 @@ describe('golden baseline — dungeon output is byte-identical to the locked rev
   });
 });
 
-describe('golden baseline — RPGGen sequences reproduce the locked revision', () => {
-  it.each(BASELINE_RPGGEN_SEEDS.map((seed) => [seed] as const))('seed %d', (seed) => {
-    expect(captureRpgGenSequence(seed)).toEqual(baseline.rpgGenSequences[String(seed)]);
+describe('golden baseline — content-generator sequences reproduce the locked revision', () => {
+  it.each(BASELINE_CONTENT_GENERATOR_SEEDS.map((seed) => [seed] as const))('seed %d', (seed) => {
+    expect(captureContentGeneratorSequence(seed)).toEqual(baseline.contentGeneratorSequences[String(seed)]);
   });
 });

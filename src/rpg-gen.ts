@@ -1,29 +1,30 @@
 /* ============================================================
-   RPG-GEN — reusable random content generator.
+   Content generator — reusable random content engine.
 
-   createRPGGen(source) builds a content engine over any
+   createContentGenerator(source) builds a content engine over any
    ContentSource (loot/tones/places/monsters/moods/activities/
-   titles/names); the exported RPGGen is that engine bound to the
-   built-in RPG data.
+   titles/names); the exported defaultContentGenerator is that
+   engine bound to the built-in defaultContent data.
 
-   Every generator takes an optional rng (a 0..1 function — pass a
-   seeded one for reproducibility; defaults to Math.random) and a
-   context from context(rng). The context fixes one genre, an
-   optional theme and a tone for the whole dungeon so results stay
-   coherent (no Count Jacob meeting Imam Josh).
+   Every generator takes an optional random-number generator (a
+   0..1 function — pass a seeded one for reproducibility; defaults
+   to Math.random) and a context from context(random). The context
+   fixes one genre, an optional theme and a tone for the whole
+   dungeon so results stay coherent (no Count Jacob meeting Imam
+   Josh).
 
-   DETERMINISM: helpers draw from the rng in a fixed order and
+   DETERMINISM: helpers draw from the generator in a fixed order and
    count (see rng-utils). Any edit that changes when a draw happens
    changes every seeded output — the golden-baseline spec locks this.
    ============================================================ */
 import type { ContentSource, MonsterEntry, TitleEntry, ToneCategory } from './content-types';
-import { RPG } from './data';
-import { capitalizeFirst, chance, pick, type RNG } from './rng-utils';
+import { defaultContent } from './data';
+import { capitalizeFirst, chance, pick, type RandomNumberGenerator } from './rng-utils';
 
 /** A random-number generator returning a value in [0, 1) — canonical declaration in rng-utils. */
-export type { RNG } from './rng-utils';
+export type { RandomNumberGenerator } from './rng-utils';
 
-export interface RPGContext {
+export interface GenerationContext {
   genre: string;
   theme: string | null;
   tone: string | null;
@@ -40,10 +41,10 @@ const VERMIN: Record<string, number> = { rat:1, spider:1, snake:1, bat:1, scorpi
 export const isVermin = (name: string): boolean =>
   String(name).toLowerCase().split(/[^a-z]+/).some((word) => !!(word && (VERMIN[word] || VERMIN[word.replace(/s$/, '')])));
 
-/** Build a content engine bound to the given source (default: built-in RPG data). */
-export const createRPGGen = (source: ContentSource = RPG) => {
-  const monsterPool = (ctx: RPGContext, includeAnimals: boolean): MonsterEntry[] =>
-    genrePool(source.monsters, ctx.genre).filter((monster) => !monster.a || includeAnimals || isVermin(monster.n));
+/** Build a content engine bound to the given source (default: built-in defaultContent data). */
+export const createContentGenerator = (source: ContentSource = defaultContent) => {
+  const monsterPool = (context: GenerationContext, includeAnimals: boolean): MonsterEntry[] =>
+    genrePool(source.monsters, context.genre).filter((monster) => !monster.isAnimal || includeAnimals || isVermin(monster.name));
 
   /* The distinct real cultural themes present in the name data, excluding the
      always-matching 'generic' pool. (`theme` is a value on each entry, NOT a
@@ -52,130 +53,134 @@ export const createRPGGen = (source: ContentSource = RPG) => {
     [...new Set(source.names.given.map((nameEntry) => nameEntry.theme))].filter((theme) => theme !== 'generic');
 
   /* one coherent context for a whole dungeon */
-  const context = (rng?: RNG): RPGContext => {
-    const genre = pick(rng, GENRES) ?? GENRES[0]; // GENRES is non-empty; fallback never fires
-    const theme = chance(rng, 0.15) ? pick(rng, themePool()) : null;   // ~15% themed
-    const tone = pick(rng, Object.keys(source.tones));
+  const context = (random?: RandomNumberGenerator): GenerationContext => {
+    const genre = pick(random, GENRES) ?? GENRES[0]; // GENRES is non-empty; fallback never fires
+    const theme = chance(random, 0.15) ? pick(random, themePool()) : null;   // ~15% themed
+    const tone = pick(random, Object.keys(source.tones));
     return { genre, theme, tone };
   };
 
-  const toneCategory = (ctx: RPGContext, categoryName: string): ToneCategory | undefined =>
-    ctx.tone ? source.tones[ctx.tone]?.[categoryName] : undefined;
+  // Alias so a generator whose own `context` parameter shadows the factory can
+  // still fall back to building a fresh context when none is passed.
+  const makeContext = context;
+
+  const toneCategory = (context: GenerationContext, categoryName: string): ToneCategory | undefined =>
+    context.tone ? source.tones[context.tone]?.[categoryName] : undefined;
 
   /* attach a tone descriptor: adjective goes BEFORE, description goes AFTER */
-  const decorate = (rng: RNG | undefined, base: string, categoryName: string, ctx: RPGContext): string => {
-    const category = toneCategory(ctx, categoryName);
+  const decorate = (random: RandomNumberGenerator | undefined, base: string, categoryName: string, context: GenerationContext): string => {
+    const category = toneCategory(context, categoryName);
     if (!category) return base;
-    const hasDescriptions = !!(category.desc && category.desc.length);
-    const useAdjective = !!(category.adj && category.adj.length)
-      && (categoryName === 'item' || !hasDescriptions || chance(rng, 0.55));
-    if (useAdjective) return capitalizeFirst(pick(rng, category.adj) ?? '') + ' ' + base; // adjective BEFORE (items only ever use adjectives)
-    if (hasDescriptions) return base + ' ' + pick(rng, category.desc);                    // description AFTER
+    const hasDescriptions = !!(category.descriptions && category.descriptions.length);
+    const useAdjective = !!(category.adjectives && category.adjectives.length)
+      && (categoryName === 'item' || !hasDescriptions || chance(random, 0.55));
+    if (useAdjective) return capitalizeFirst(pick(random, category.adjectives) ?? '') + ' ' + base; // adjective BEFORE (items only ever use adjectives)
+    if (hasDescriptions) return base + ' ' + pick(random, category.descriptions);                    // description AFTER
     return base;
   };
 
   /* ---- items / loot ---- */
-  const randomItem = (rng?: RNG, maybeContext?: RPGContext): string | null => {
-    const ctx = maybeContext || context(rng);
-    const genreLoot = source.loot[ctx.genre];
+  const randomItem = (random?: RandomNumberGenerator, maybeContext?: GenerationContext): string | null => {
+    const context = maybeContext || makeContext(random);
+    const genreLoot = source.loot[context.genre];
     if (!genreLoot) return null;
-    const categoryName = pick(rng, Object.keys(genreLoot));
-    let base = categoryName ? pick(rng, genreLoot[categoryName]) : null;
-    if (base && chance(rng, 0.40)) base = decorate(rng, base, 'item', ctx);   // ~40% get a descriptor/adjective
+    const categoryName = pick(random, Object.keys(genreLoot));
+    let base = categoryName ? pick(random, genreLoot[categoryName]) : null;
+    if (base && chance(random, 0.40)) base = decorate(random, base, 'item', context);   // ~40% get a descriptor/adjective
     return base;
   };
 
   /* ---- places / locations ---- */
-  const randomLocation = (rng?: RNG, maybeContext?: RPGContext): string | null => {
-    const ctx = maybeContext || context(rng);
-    let base = pick(rng, source.places[ctx.genre] || []);
+  const randomLocation = (random?: RandomNumberGenerator, maybeContext?: GenerationContext): string | null => {
+    const context = maybeContext || makeContext(random);
+    let base = pick(random, source.places[context.genre] || []);
     if (!base) return null;
-    if (chance(rng, 0.70)) base = decorate(rng, base, 'place', ctx);          // ~70% get a descriptor/adjective
+    if (chance(random, 0.70)) base = decorate(random, base, 'place', context);          // ~70% get a descriptor/adjective
     return base;
   };
 
   /* ---- monsters ---- */
-  const randomMonster = (rng?: RNG, maybeContext?: RPGContext): string | null => {
-    const ctx = maybeContext || context(rng);
-    const monster = pick(rng, monsterPool(ctx, false));   // proper monsters + dungeon vermin; no stray deer/hawks
+  const randomMonster = (random?: RandomNumberGenerator, maybeContext?: GenerationContext): string | null => {
+    const context = maybeContext || makeContext(random);
+    const monster = pick(random, monsterPool(context, false));   // proper monsters + dungeon vermin; no stray deer/hawks
     if (!monster) return null;
-    if (monster.a) return monster.n;                                          // animals: no mood/action (a hawk can't sharpen a knife)
-    const mood = chance(rng, 0.20) ? pick(rng, source.moods) : null;          // ~20% a mood
-    const action = chance(rng, 0.20) ? pick(rng, genrePool(source.activities, ctx.genre)) : null; // ~20% an action
-    let described = monster.n;
+    if (monster.isAnimal) return monster.name;                                // animals: no mood/action (a hawk can't sharpen a knife)
+    const mood = chance(random, 0.20) ? pick(random, source.moods) : null;          // ~20% a mood
+    const action = chance(random, 0.20) ? pick(random, genrePool(source.activities, context.genre)) : null; // ~20% an action
+    let described = monster.name;
     if (mood) described = capitalizeFirst(String(mood).toLowerCase()) + ' ' + described;  // mood before:  "Happy Troll"
     if (action) described = described + ', ' + String(action).toLowerCase();              // action after: "Happy Troll, cleaning a sword"
     return capitalizeFirst(described);
   };
 
   /* any animal for the genre (kept for future outdoor/wilderness generation; not used in dungeons) */
-  const randomAnimal = (rng?: RNG, maybeContext?: RPGContext): string | null => {
-    const ctx = maybeContext || context(rng);
-    const animals = genrePool(source.monsters, ctx.genre).filter((monster) => monster.a);
-    const animal = pick(rng, animals);
-    return animal ? animal.n : null;
+  const randomAnimal = (random?: RandomNumberGenerator, maybeContext?: GenerationContext): string | null => {
+    const context = maybeContext || makeContext(random);
+    const animals = genrePool(source.monsters, context.genre).filter((monster) => monster.isAnimal);
+    const animal = pick(random, animals);
+    return animal ? animal.name : null;
   };
 
   /* ---- names (people) ---- */
-  const randomTitle = (rng: RNG | undefined, ctx: RPGContext, gender: string): TitleEntry | null => {
+  const randomTitle = (random: RandomNumberGenerator | undefined, context: GenerationContext, gender: string): TitleEntry | null => {
     const matching = source.titles.filter((titleEntry) => {
-      const themeMatches = (titleEntry.theme === 'generic') || (!!ctx.theme && titleEntry.theme === ctx.theme);
+      const themeMatches = (titleEntry.theme === 'generic') || (!!context.theme && titleEntry.theme === context.theme);
       const genderMatches = (titleEntry.gender === gender) || (titleEntry.gender === 'neutral');
       return themeMatches && genderMatches;
     });
-    return matching.length ? pick(rng, matching) : null;
+    return matching.length ? pick(random, matching) : null;
   };
 
-  const randomName = (rng?: RNG, maybeContext?: RPGContext): string | null => {
-    const ctx = maybeContext || context(rng);
+  const randomName = (random?: RandomNumberGenerator, maybeContext?: GenerationContext): string | null => {
+    const context = maybeContext || makeContext(random);
     const given = source.names.given;
     if (!given.length) return null;
-    const gender = chance(rng, 0.5) ? 'male' : 'female';
+    const gender = chance(random, 0.5) ? 'male' : 'female';
     const pool = (strictTheme: boolean) =>
       given.filter((nameEntry) => {
-        if (nameEntry.g !== gender) return false;
-        const genreMatches = nameEntry.genre === 'generic' || nameEntry.genre === ctx.genre;
-        const themeMatches = nameEntry.theme === 'generic' || (!!ctx.theme && nameEntry.theme === ctx.theme);
+        if (nameEntry.gender !== gender) return false;
+        const genreMatches = nameEntry.genre === 'generic' || nameEntry.genre === context.genre;
+        const themeMatches = nameEntry.theme === 'generic' || (!!context.theme && nameEntry.theme === context.theme);
         return strictTheme ? (genreMatches && themeMatches) : genreMatches;
       });
-    const first = pick(rng, pool(true)) || pick(rng, pool(false)) || pick(rng, given);
+    const first = pick(random, pool(true)) || pick(random, pool(false)) || pick(random, given);
     if (!first) return null;
-    let name: string = first.n;
+    let name: string = first.name;
     const surnames = source.names.surname.filter((surnameEntry) =>
-      surnameEntry.genre === 'generic' || surnameEntry.genre === ctx.genre);
-    if (surnames.length && chance(rng, 0.40)) {
-      const surname = pick(rng, surnames);
-      if (surname) name += ' ' + surname.n;
+      surnameEntry.genre === 'generic' || surnameEntry.genre === context.genre);
+    if (surnames.length && chance(random, 0.40)) {
+      const surname = pick(random, surnames);
+      if (surname) name += ' ' + surname.name;
     }
-    if (chance(rng, 0.20)) {                                                 // ~20% get a title (theme-matched)
-      const title = randomTitle(rng, ctx, gender);
+    if (chance(random, 0.20)) {                                                 // ~20% get a title (theme-matched)
+      const title = randomTitle(random, context, gender);
       if (title) name = (title.placement === 'after') ? (name + ' ' + title.title) : (title.title + ' ' + name);
     }
     return name;
   };
 
-  const randomMood = (rng?: RNG): string | null => pick(rng, source.moods);
-  const randomActivity = (rng?: RNG, maybeContext?: RPGContext): string | null => {
-    const ctx = maybeContext || context(rng);
-    return pick(rng, genrePool(source.activities, ctx.genre));
+  const randomMood = (random?: RandomNumberGenerator): string | null => pick(random, source.moods);
+  const randomActivity = (random?: RandomNumberGenerator, maybeContext?: GenerationContext): string | null => {
+    const context = maybeContext || makeContext(random);
+    return pick(random, genrePool(source.activities, context.genre));
   };
 
   /* a raw tone descriptor phrase for a category ('place','sound','monster','item','building','person') */
-  const toneDesc = (rng: RNG | undefined, ctx: RPGContext, categoryName: string): string | null => {
-    const category = toneCategory(ctx, categoryName);
-    if (!category || !category.desc || !category.desc.length) return null;
-    return pick(rng, category.desc);
+  const toneDescription = (random: RandomNumberGenerator | undefined, context: GenerationContext, categoryName: string): string | null => {
+    const category = toneCategory(context, categoryName);
+    if (!category || !category.descriptions || !category.descriptions.length) return null;
+    return pick(random, category.descriptions);
   };
-  const toneAdj = (rng: RNG | undefined, ctx: RPGContext, categoryName: string): string | null => {
-    const category = toneCategory(ctx, categoryName);
-    if (!category || !category.adj || !category.adj.length) return null;
-    return pick(rng, category.adj);
+  const toneAdjective = (random: RandomNumberGenerator | undefined, context: GenerationContext, categoryName: string): string | null => {
+    const category = toneCategory(context, categoryName);
+    if (!category || !category.adjectives || !category.adjectives.length) return null;
+    return pick(random, category.adjectives);
   };
 
   /* ---- traps ---- */
-  const randomTrap = (rng?: RNG, maybeContext?: RPGContext): string | null => {
-    const ctx = maybeContext || context(rng);
-    return pick(rng, genrePool(source.traps, ctx.genre));
+  const randomTrap = (random?: RandomNumberGenerator, maybeContext?: GenerationContext): string | null => {
+    const context = maybeContext || makeContext(random);
+    return pick(random, genrePool(source.traps, context.genre));
   };
 
   return {
@@ -186,8 +191,8 @@ export const createRPGGen = (source: ContentSource = RPG) => {
     randomName,
     randomTitle,
     randomTrap,
-    toneDesc,
-    toneAdj,
+    toneDescription,
+    toneAdjective,
     randomMood,
     randomActivity,
     randomAnimal,
@@ -196,7 +201,7 @@ export const createRPGGen = (source: ContentSource = RPG) => {
   };
 };
 
-/** The content engine bound to the built-in RPG data. */
-export const RPGGen = createRPGGen();
+/** The content engine bound to the built-in defaultContent data. */
+export const defaultContentGenerator = createContentGenerator();
 
-export type RPGGenType = typeof RPGGen;
+export type ContentGeneratorType = typeof defaultContentGenerator;

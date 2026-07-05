@@ -2,16 +2,17 @@
    auto-stuff-generator — public API.
 
    Random-content generation for RPGs and similar: a coherent
-   content engine (RPGGen) plus a headless procedural dungeon
-   generator. All generation is DOM-free and accepts an optional
-   seeded RNG for reproducibility.
+   content engine (defaultContentGenerator) plus a headless
+   procedural dungeon generator. All generation is DOM-free and
+   accepts an optional seeded random-number generator for
+   reproducibility.
    ============================================================ */
 
 // Random-content engine + its types
-export { createRPGGen, isVermin, RPGGen } from './rpg-gen';
-export type { RNG, RPGContext, RPGGenType } from './rpg-gen';
+export { createContentGenerator, isVermin, defaultContentGenerator } from './rpg-gen';
+export type { RandomNumberGenerator, GenerationContext, ContentGeneratorType } from './rpg-gen';
 
-// Typed contract for the content the engine draws from (inject via createRPGGen)
+// Typed contract for the content the engine draws from (inject via createContentGenerator)
 export type {
   ContentSource,
   GenreMap,
@@ -25,8 +26,8 @@ export type {
 } from './content-types';
 
 // Aggregated data buckets (the built-in default ContentSource)
-export { RPG } from './data';
-export type { RPGData } from './data';
+export { defaultContent } from './data';
+export type { ContentData } from './data';
 
 // Procedural dungeon generator + seeded RNG factory + strategy seam
 export { defaultDungeonStrategy, generateDungeon, mulberry32 } from './dungeon';

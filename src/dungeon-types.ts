@@ -2,14 +2,12 @@
    Public types for the dungeon generator.
 
    These describe the serializable object returned by
-   generateDungeon(). The generator implementation
-   (dungeon.ts) is loose, untyped JS ported verbatim from the
-   original app; this file is the typed public contract so
-   consumers get real types from the published declarations.
+   generateDungeon(): the typed public contract so consumers get
+   real types from the published declarations.
    ============================================================ */
 
 /** A random-number generator returning a value in [0, 1) — canonical declaration in rng-utils. */
-export type { RNG } from './rng-utils';
+export type { RandomNumberGenerator } from './rng-utils';
 
 /**
  * How much content the generator places:
@@ -22,17 +20,17 @@ export type DungeonMode = 'empty' | 'full' | 'detailed';
 
 /** Grid dimensions and the pixel size of a single cell. */
 export interface DungeonGrid {
-  gw: number;
-  gh: number;
-  cell: number;
+  width: number;
+  height: number;
+  cellSize: number;
 }
 
 /** A rectangular room placed on the grid. */
 export interface DungeonRoom {
-  x: number;
-  y: number;
-  w: number;
-  h: number;
+  gridX: number;
+  gridY: number;
+  width: number;
+  height: number;
   id: number;
 }
 
@@ -47,32 +45,32 @@ export interface DungeonMarker {
    * and narrowing the known kinds.
    */
   type: KnownMarkerType | (string & {});
-  x: number;
-  y: number;
-  dir?: string;
-  room?: number;
+  gridX: number;
+  gridY: number;
+  direction?: string;
+  roomId?: number;
   label?: string;
   note?: string;
-  seq?: number;
-  ref?: string;
+  sequence?: number;
+  referenceLabel?: string;
 }
 
 /** A straight secret-passage centerline, in cell coordinates. */
 export interface DungeonSecretPath {
-  x1: number;
-  y1: number;
-  x2: number;
-  y2: number;
+  startX: number;
+  startY: number;
+  endX: number;
+  endY: number;
 }
 
 /** A hidden room reachable only via a secret passage. */
 export interface DungeonSecretRoom {
-  x: number;
-  y: number;
-  w: number;
-  h: number;
-  cx: number;
-  cy: number;
+  gridX: number;
+  gridY: number;
+  width: number;
+  height: number;
+  centerX: number;
+  centerY: number;
 }
 
 /** Summary counts shown in the dungeon's tally panel. */
