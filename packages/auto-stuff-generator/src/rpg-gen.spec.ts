@@ -89,6 +89,8 @@ function namingSource(): ContentSource {
         { name: 'Fantberg', genre: 'fantasy' },
         { name: 'Modberg', genre: 'modern' },
       ],
+      dungeonNamePrefixes: [],
+      dungeonNameSuffixes: [],
     },
     titles: [
       { title: 'Dame', category: 'nobility', theme: 'generic', gender: 'female', placement: 'before' },
@@ -152,8 +154,57 @@ describe('randomName — pool filtering and composition', () => {
   });
 
   it('returns null when the source has no given names', () => {
-    const empty = createContentGenerator({ ...namingSource(), names: { given: [], surname: [] } });
+    const empty = createContentGenerator({ ...namingSource(), names: { given: [], surname: [], dungeonNamePrefixes: [], dungeonNameSuffixes: [] } });
     expect(empty.randomName(mulberry32(1), fantasy)).toBeNull();
+  });
+});
+
+describe('randomGivenName — the given-name slice of the full-name path', () => {
+  const engine = createContentGenerator(namingSource());
+  const fantasy: GenerationContext = { genre: 'fantasy', theme: null, tone: null };
+
+  it('draws given names only from the active genre pools, with no surname or title', () => {
+    for (let seed = 1; seed <= 120; seed++) {
+      const givenName = engine.randomGivenName(mulberry32(seed), fantasy);
+      expect(givenName).toMatch(/^(Fantasia|Fantasio)$/); // bare given name — never Fantberg/Dame/the Bold
+    }
+  });
+
+  it('matches the given-name prefix of randomName for the same seed (shared gender draw + pick chain)', () => {
+    for (let seed = 1; seed <= 120; seed++) {
+      const givenName = engine.randomGivenName(mulberry32(seed), fantasy) as string;
+      const fullName = engine.randomName(mulberry32(seed), fantasy) as string;
+      // The full name is the given name, possibly with a surname/title around it.
+      expect(fullName).toContain(givenName);
+    }
+  });
+
+  it('returns null when the source has no given names', () => {
+    const empty = createContentGenerator({ ...namingSource(), names: { given: [], surname: [], dungeonNamePrefixes: [], dungeonNameSuffixes: [] } });
+    expect(empty.randomGivenName(mulberry32(1), fantasy)).toBeNull();
+  });
+});
+
+describe('randomDungeonName — stock composition from the names-table fragment pools', () => {
+  it('composes one prefix pick and one suffix pick joined with a space', () => {
+    const engine = createContentGenerator({
+      ...namingSource(),
+      names: { given: [], surname: [], dungeonNamePrefixes: ['The Improbable'], dungeonNameSuffixes: ['Snorkelry'] },
+    });
+    expect(engine.randomDungeonName(mulberry32(1))).toBe('The Improbable Snorkelry');
+  });
+
+  it('draws from the built-in pools with the default content', () => {
+    const engine = createContentGenerator(defaultContent);
+    const name = engine.randomDungeonName(mulberry32(7)) as string;
+    const words = name.split(' ');
+    expect(defaultContent.names.dungeonNamePrefixes).toContain(words.slice(0, 2).join(' '));
+    expect(defaultContent.names.dungeonNameSuffixes).toContain(words[words.length - 1]);
+  });
+
+  it('returns null when both fragment pools are empty', () => {
+    const engine = createContentGenerator(namingSource()); // namingSource has empty fragment pools
+    expect(engine.randomDungeonName(mulberry32(1))).toBeNull();
   });
 });
 
@@ -315,6 +366,14 @@ describe('DB-1 — themePool yields real theme names, not array indices', () => 
     expect(themesSeen.size).toBeGreaterThan(0);
   });
 
+  it('the now-public themePool() returns exactly the real themes, generic excluded', () => {
+    const engine = createContentGenerator(defaultContent);
+    const themes = engine.themePool();
+    expect(new Set(themes)).toEqual(realThemes);
+    expect(themes).not.toContain('generic');
+    for (const theme of themes) expect(theme).not.toMatch(/^\d+$/); // an array index like '0' / '137' is the bug
+  });
+
   it('a themed context can resolve a theme-matched title (not only generic fallbacks)', () => {
     /* Single real theme in the data => every themed context picks 'celtic';
        the only title is celtic-themed (no generic fallback), so it can ONLY
@@ -329,6 +388,8 @@ describe('DB-1 — themePool yields real theme names, not array indices', () => 
           { name: 'Cadogan', gender: 'male', theme: 'celtic', genre: 'fantasy' },
         ],
         surname: [],
+        dungeonNamePrefixes: [],
+        dungeonNameSuffixes: [],
       },
       titles: [
         { title: 'Ard Rí', category: 'nobility', theme: 'celtic', gender: 'neutral', placement: 'before' },
@@ -360,7 +421,7 @@ describe('decorate — item-adjective rule (N11)', () => {
   function itemRuleSource(): ContentSource {
     return {
       monsters: { fantasy: [{ name: 'Gronk' }] },
-      names: { given: [], surname: [] },
+      names: { given: [], surname: [], dungeonNamePrefixes: [], dungeonNameSuffixes: [] },
       titles: [],
       // 'grim' item has descriptions but no adjectives; place has descriptions too.
       tones: {

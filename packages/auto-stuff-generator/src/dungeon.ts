@@ -10,8 +10,8 @@
    ============================================================ */
 import { defaultContent } from './data';
 import { defaultContentGenerator, type GenerationContext } from './rpg-gen';
-import { defaultTextGenerator } from './default-generators';
-import type { TextGenerator } from './generator-contracts';
+import { defaultNameGenerator, defaultTextGenerator } from './default-generators';
+import type { NameGenerator, TextGenerator } from './generator-contracts';
 import type { GenreMap, MonsterEntry } from './content-types';
 import type {
   DungeonMarker,
@@ -112,9 +112,6 @@ const FANTASY_GOLD_CHANCE = 0.45;
 const FANTASY_SILVER_CHANCE = 0.6;
 const FANTASY_COPPER_CHANCE = 0.7;
 
-/** Fallback dungeon-name fragments when no generated location is available. */
-const DUNGEON_NAME_PREFIXES = ['The Sunken', 'The Forgotten', 'The Shattered', 'The Black', 'The Hollow', 'The Buried'];
-const DUNGEON_NAME_SUFFIXES = ['Vaults', 'Catacombs', 'Warrens', 'Crypts', 'Halls', 'Tombs'];
 const DEPTH_NUMERALS = ['I', 'II', 'III', 'IV', 'V'];
 
 /* allowed content modes; anything else falls back to 'full' */
@@ -614,19 +611,32 @@ const describeMoney = (genre: string, random: GenerationRandom): string => {
   return 'Money: ' + random.intBetween(5, 200);
 };
 
-const enrichMonsterMarker = (marker: DungeonMarker, context: GenerationContext, textGenerator: TextGenerator, random: GenerationRandom): void => {
+/**
+ * The generator implementations `generateDungeon` may receive; any omitted
+ * member falls back to the built-in default. Monster/loot members arrive when
+ * their packages are extracted.
+ */
+export interface InjectedGenerators {
+  text?: TextGenerator;
+  names?: NameGenerator;
+}
+
+/** `InjectedGenerators` with every default resolved — what the pipeline steps consume. */
+export type ResolvedGenerators = Required<InjectedGenerators>;
+
+const enrichMonsterMarker = (marker: DungeonMarker, context: GenerationContext, generators: ResolvedGenerators, random: GenerationRandom): void => {
   marker.label = defaultContentGenerator.randomMonster(random.next, context) || 'Monster';
   marker.note = '(' + pickDifficulty(random).toLowerCase() + ')';
   if (random.chance(MONSTER_DESCRIPTION_CHANCE)) {
     const description = random.chance(TONE_ADJECTIVE_CHANCE)
-      ? textGenerator.generateAdjective(random.next, context, 'monster')
-      : textGenerator.generateDescription(random.next, context, 'monster');
+      ? generators.text.generateAdjective(random.next, context, 'monster')
+      : generators.text.generateDescription(random.next, context, 'monster');
     if (description) marker.note += ' ' + capitalizeFirst(description) + '.';
   }
 };
 
-const enrichBossMarker = (marker: DungeonMarker, context: GenerationContext, bossCreaturePool: MonsterEntry[], textGenerator: TextGenerator, random: GenerationRandom): void => {
-  const bossName = defaultContentGenerator.randomName(random.next, context);
+const enrichBossMarker = (marker: DungeonMarker, context: GenerationContext, bossCreaturePool: MonsterEntry[], generators: ResolvedGenerators, random: GenerationRandom): void => {
+  const bossName = generators.names.generateFullName(random.next, context);
   const creatureEntry = random.pickFrom(bossCreaturePool);
   const creatureName = (creatureEntry && creatureEntry.name) || 'Beast';
   const useName = !!bossName && random.chance(BOSS_NAMED_CHANCE);
@@ -635,8 +645,8 @@ const enrichBossMarker = (marker: DungeonMarker, context: GenerationContext, bos
   const bossCategory = useName ? 'person' : 'monster';
   if (random.chance(BOSS_DESCRIPTION_CHANCE)) {
     const description = random.chance(TONE_ADJECTIVE_CHANCE)
-      ? textGenerator.generateAdjective(random.next, context, bossCategory)
-      : textGenerator.generateDescription(random.next, context, bossCategory);
+      ? generators.text.generateAdjective(random.next, context, bossCategory)
+      : generators.text.generateDescription(random.next, context, bossCategory);
     if (description) marker.note += ' ' + capitalizeFirst(description) + '.';
   }
 };
@@ -657,13 +667,13 @@ const enrichTrapMarker = (marker: DungeonMarker, context: GenerationContext, ran
 /* 'detailed' mode: name & classify every foe, hoard and trap from the random
    lists. Enrichment is a per-kind lookup: markers of kinds without an enricher
    (including consumer-defined kinds) pass through untouched and draw nothing. */
-const enrichDetailed = (markers: DungeonMarker[], context: GenerationContext, textGenerator: TextGenerator, random: GenerationRandom): void => {
+const enrichDetailed = (markers: DungeonMarker[], context: GenerationContext, generators: ResolvedGenerators, random: GenerationRandom): void => {
   const monstersByGenre: GenreMap<MonsterEntry> = defaultContent.monsters;
   const bossCreaturePool = (monstersByGenre[context.genre] || []).concat(monstersByGenre.generic || [])
     .filter((monster) => !monster.isAnimal); // bosses are never animals
   const enrichersByKind: Partial<Record<KnownMarkerType, (marker: DungeonMarker) => void>> = {
-    monster: (marker) => enrichMonsterMarker(marker, context, textGenerator, random),
-    boss: (marker) => enrichBossMarker(marker, context, bossCreaturePool, textGenerator, random),
+    monster: (marker) => enrichMonsterMarker(marker, context, generators, random),
+    boss: (marker) => enrichBossMarker(marker, context, bossCreaturePool, generators, random),
     treasure: (marker) => enrichTreasureMarker(marker, context, random),
     trap: (marker) => enrichTrapMarker(marker, context, random),
   };
@@ -678,12 +688,12 @@ const enrichDetailed = (markers: DungeonMarker[], context: GenerationContext, te
 
 /* ---------------- step 6: name & flavor ---------------- */
 
-const pickNameAndFlavor = (context: GenerationContext | null, textGenerator: TextGenerator, random: GenerationRandom): { name: string | null; flavor: string | null } => {
+const pickNameAndFlavor = (context: GenerationContext | null, generators: ResolvedGenerators, random: GenerationRandom): { name: string | null; flavor: string | null } => {
   if (!context) return { name: null, flavor: null };
   let name: string | null = null;
-  const location = textGenerator.generateLocation(random.next, context);
+  const location = generators.text.generateLocation(random.next, context);
   if (location) name = (/^the\b/i.test(location) ? '' : 'The ') + location;
-  const flavor = textGenerator.generateFlavorSentence(random.next, context);
+  const flavor = generators.text.generateFlavorSentence(random.next, context);
   return { name, flavor };
 };
 
@@ -721,8 +731,8 @@ export interface DungeonStrategy {
     markers: DungeonMarker[],
     random: GenerationRandom,
   ): SecretFeatures;
-  enrichMarkers(markers: DungeonMarker[], context: GenerationContext, textGenerator: TextGenerator, random: GenerationRandom): void;
-  pickNameAndFlavor(context: GenerationContext | null, textGenerator: TextGenerator, random: GenerationRandom): { name: string | null; flavor: string | null };
+  enrichMarkers(markers: DungeonMarker[], context: GenerationContext, generators: ResolvedGenerators, random: GenerationRandom): void;
+  pickNameAndFlavor(context: GenerationContext | null, generators: ResolvedGenerators, random: GenerationRandom): { name: string | null; flavor: string | null };
 }
 
 /** The built-in algorithm — spread it to override individual steps. */
@@ -743,12 +753,16 @@ export function generateDungeon(
   level?: number,
   mode?: DungeonMode,
   strategy: DungeonStrategy = defaultDungeonStrategy,
-  textGenerator: TextGenerator = defaultTextGenerator,
+  generators: InjectedGenerators = {},
 ): DungeonResult {
   // input robustness: a non-finite seed becomes a deterministic default (0);
   // an unknown/missing mode becomes 'full'; level is clamped in createLevelSpec.
   const safeSeed = (typeof seed === 'number' && isFinite(seed)) ? (seed >>> 0) : 0;
   const safeMode: DungeonMode = (mode && VALID_MODES.has(mode)) ? mode : 'full';
+  const resolvedGenerators: ResolvedGenerators = {
+    text: generators.text ?? defaultTextGenerator,
+    names: generators.names ?? defaultNameGenerator,
+  };
   const spec = createLevelSpec(level);
   const random = createGenerationRandom(safeSeed);
 
@@ -762,14 +776,17 @@ export function generateDungeon(
     : { secretPaths: [], secretRooms: [], secretFloor: createRockGrid(spec.gridWidth, spec.gridHeight) };
 
   const contentContext: GenerationContext | null = defaultContentGenerator ? defaultContentGenerator.context(random.next) : null;
-  if (safeMode === 'detailed' && contentContext) strategy.enrichMarkers(markers, contentContext, textGenerator, random);
-  const { name, flavor } = strategy.pickNameAndFlavor(contentContext, textGenerator, random);
+  if (safeMode === 'detailed' && contentContext) strategy.enrichMarkers(markers, contentContext, resolvedGenerators, random);
+  const { name, flavor } = strategy.pickNameAndFlavor(contentContext, resolvedGenerators, random);
 
   const result: DungeonResult = {
     version: 1,
     seed: safeSeed,
     level: spec.level,
-    name: name || ((random.pickFrom(DUNGEON_NAME_PREFIXES) ?? '') + ' ' + (random.pickFrom(DUNGEON_NAME_SUFFIXES) ?? '')),
+    // stock-name fallback: same two fragment draws, in the same order, only when no
+    // location-derived name was produced (the '' arm is reachable only from a custom
+    // NameGenerator returning null — the default composition is always non-empty).
+    name: name || (contentContext && resolvedGenerators.names.generateDungeonName(random.next, contentContext)) || '',
     depth: DEPTH_NUMERALS[random.intBetween(0, DEPTH_NUMERALS.length - 1)] ?? '',
     flavor: flavor || 'Beyond the torchlight, the map runs dark.',
     genre: (safeMode === 'detailed' && contentContext) ? contentContext.genre : null,

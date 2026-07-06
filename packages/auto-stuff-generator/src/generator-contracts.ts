@@ -40,12 +40,27 @@ export interface TextGenerator {
   generateFlavorSentence(random: RandomNumberGenerator, context: GenerationContext): string | null;
 }
 
-/** People names and titles. */
+/** People names, titles, dungeon names, and the cultural-theme enumeration. */
 export interface NameGenerator {
   /** A full person name (given, optional surname, optional title), or `null`. */
   generateFullName(random: RandomNumberGenerator, context: GenerationContext): string | null;
   /** A theme- and gender-appropriate title, or `null` when none matches. */
   generateTitle(random: RandomNumberGenerator, context: GenerationContext, gender: string): TitleEntry | null;
+  /** A given name alone (same gender draw and genre/theme pools as the full-name path; no surname/title), or `null`. */
+  generateGivenName(random: RandomNumberGenerator, context: GenerationContext): string | null;
+  /**
+   * A stock dungeon name (e.g. "The Sunken Vaults"), or `null` when the
+   * implementation has no dungeon-name content. The context lets an
+   * implementation produce genre-aware names; the default composition is
+   * genre-agnostic. Draws only from `random`.
+   */
+  generateDungeonName(random: RandomNumberGenerator, context: GenerationContext): string | null;
+  /**
+   * The distinct real cultural theme names present in the implementation's
+   * name content. Excludes the match-everything `generic` sentinel (it is a
+   * wildcard, not a theme). No randomness.
+   */
+  availableThemes(): string[];
 }
 
 /** Creatures and the creature pool for a context. */

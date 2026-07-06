@@ -36,10 +36,14 @@ export const defaultTextGenerator = {
   },
 } satisfies TextGenerator;
 
-/** Default NameGenerator — full names and titles. */
+/** Default NameGenerator — given/full names, titles, stock dungeon names, and the theme enumeration. */
 export const defaultNameGenerator = {
   generateFullName: (random, context) => defaultContentGenerator.randomName(random, context),
   generateTitle: (random, context, gender) => defaultContentGenerator.randomTitle(random, context, gender),
+  generateGivenName: (random, context) => defaultContentGenerator.randomGivenName(random, context),
+  // The default composition is genre-agnostic; the engine method takes no context.
+  generateDungeonName: (random) => defaultContentGenerator.randomDungeonName(random),
+  availableThemes: () => defaultContentGenerator.themePool(),
 } satisfies NameGenerator;
 
 /** Default MonsterGenerator — creatures and the eligible creature pool. */

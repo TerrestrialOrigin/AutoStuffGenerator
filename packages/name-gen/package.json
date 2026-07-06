@@ -1,0 +1,58 @@
+{
+  "name": "auto-stuff-name-gen",
+  "version": "0.0.0",
+  "description": "Default NameGenerator implementation for auto-stuff-generator: given/full person names, titles, stock dungeon names, and cultural-theme enumeration. Implements the auto-stuff-generator NameGenerator contract.",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/types/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "main": "dist/index.js",
+  "module": "dist/index.js",
+  "types": "dist/types/index.d.ts",
+  "engines": {
+    "node": ">=20.11"
+  },
+  "files": [
+    "dist/**/*"
+  ],
+  "scripts": {
+    "build": "npm run lint && npm run type-check && npm run test && esbuild --bundle --minify --sourcemap src/index.ts --outfile=dist/index.js --format=esm --packages=external && npm run types",
+    "type-check": "tsc --noEmit",
+    "types": "tsc --emitDeclarationOnly",
+    "test": "jest",
+    "lint": "eslint ."
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/TerrestrialOrigin/AutoStuffGenerator.git"
+  },
+  "keywords": [
+    "rpg",
+    "procedural-generation",
+    "name-generation",
+    "random-content",
+    "tabletop"
+  ],
+  "author": "Terrestrial Origin LLC",
+  "license": "MIT",
+  "dependencies": {
+    "auto-stuff-generator": "^0.5.1"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.20.0",
+    "@types/jest": "^30.0.0",
+    "@typescript-eslint/eslint-plugin": "^8.23.0",
+    "@typescript-eslint/parser": "^8.23.0",
+    "esbuild": "^0.27.2",
+    "eslint": "^9.20.0",
+    "globals": "^17.0.0",
+    "jest": "^30.2.0",
+    "ts-jest": "^29.2.5",
+    "typescript": "^5.7.3",
+    "typescript-eslint": "^8.23.0"
+  }
+}

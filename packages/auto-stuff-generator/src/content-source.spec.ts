@@ -16,6 +16,8 @@ function customSource(): ContentSource {
         { name: 'Borvexus', gender: 'male', theme: 'generic', genre: 'generic' },
       ],
       surname: [{ name: 'Zumblefog', genre: 'generic' }],
+      dungeonNamePrefixes: ['The Improbable'],
+      dungeonNameSuffixes: ['Snorkelry'],
     },
     titles: [
       { title: 'Grand Zibbler', category: 'custom', theme: 'generic', gender: 'neutral', placement: 'before' },
@@ -92,7 +94,7 @@ describe('createContentGenerator — empty custom pools degrade gracefully', () 
   it('returns null (and never throws) when the active genre has no content', () => {
     const emptySource: ContentSource = {
       monsters: {},
-      names: { given: [], surname: [] },
+      names: { given: [], surname: [], dungeonNamePrefixes: [], dungeonNameSuffixes: [] },
       titles: [],
       tones: {},
       loot: {},
@@ -127,6 +129,23 @@ describe('ContentSource — malformed sources are rejected at compile time', () 
       monsters: { fantasy: [{ isAnimal: 1 }] },
     } satisfies ContentSource;
     expect(malformed).toBeDefined();
+  });
+
+  it('flags a names table missing the dungeon-name fragment pools', () => {
+    const malformed = {
+      ...customSource(),
+      // @ts-expect-error — NamesTable requires dungeonNamePrefixes/dungeonNameSuffixes
+      names: { given: [], surname: [] },
+    } satisfies ContentSource;
+    expect(malformed).toBeDefined();
+  });
+
+  it('carries the dungeon-name fragments in the built-in names table (values moved verbatim)', () => {
+    // The pools moved from the dungeon generator's former constants — values unchanged.
+    expect(defaultContent.names.dungeonNamePrefixes)
+      .toEqual(['The Sunken', 'The Forgotten', 'The Shattered', 'The Black', 'The Hollow', 'The Buried']);
+    expect(defaultContent.names.dungeonNameSuffixes)
+      .toEqual(['Vaults', 'Catacombs', 'Warrens', 'Crypts', 'Halls', 'Tombs']);
   });
 
   it('flags a missing content bucket', () => {
