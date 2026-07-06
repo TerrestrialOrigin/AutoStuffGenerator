@@ -12,6 +12,10 @@
 export { createContentGenerator, isVermin, defaultContentGenerator } from './rpg-gen';
 export type { RandomNumberGenerator, GenerationContext, ContentGeneratorType } from './rpg-gen';
 
+// Pure RNG helpers — part of the contracts/RNG layer so implementation packages
+// draw randomness only through these (a determinism requirement of every contract).
+export { pick, chance, capitalizeFirst, randomFrom, randomInt, randomIndex } from './rng-utils';
+
 // Typed contract for the content the engine draws from (inject via createContentGenerator)
 export type {
   ContentSource,

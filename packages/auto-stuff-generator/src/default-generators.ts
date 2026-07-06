@@ -11,6 +11,7 @@
    ============================================================ */
 import { generateDungeon } from './dungeon';
 import { defaultContentGenerator } from './rpg-gen';
+import { capitalizeFirst, pick } from './rng-utils';
 import type {
   DungeonGenerator,
   LootGenerator,
@@ -19,11 +20,20 @@ import type {
   TextGenerator,
 } from './generator-contracts';
 
-/** Default TextGenerator — tone adjectives/descriptions and location names. */
+/** Default TextGenerator — tone adjectives/descriptions, location names, flavor sentences. */
 export const defaultTextGenerator = {
   generateAdjective: (random, context, category) => defaultContentGenerator.toneAdjective(random, context, category),
   generateDescription: (random, context, category) => defaultContentGenerator.toneDescription(random, context, category),
   generateLocation: (random, context) => defaultContentGenerator.randomLocation(random, context),
+  // Draw order matches the dungeon generator's former inline flavor block exactly:
+  // pick one flavor category (1 draw), then a place/sound/building description
+  // falling back to 'place' — the golden baseline locks this ordering.
+  generateFlavorSentence: (random, context) => {
+    const flavorCategory = pick(random, ['place', 'sound', 'building']) ?? 'place';
+    const description = defaultContentGenerator.toneDescription(random, context, flavorCategory)
+      || defaultContentGenerator.toneDescription(random, context, 'place');
+    return description ? capitalizeFirst(description) + '.' : null;
+  },
 } satisfies TextGenerator;
 
 /** Default NameGenerator — full names and titles. */

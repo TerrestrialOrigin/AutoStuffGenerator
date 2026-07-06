@@ -67,7 +67,10 @@ export const createContentGenerator = (source: ContentSource = defaultContent) =
   const toneCategory = (context: GenerationContext, categoryName: string): ToneCategory | undefined =>
     context.tone ? source.tones[context.tone]?.[categoryName] : undefined;
 
-  /* attach a tone descriptor: adjective goes BEFORE, description goes AFTER */
+  /* attach a tone descriptor: adjective goes BEFORE, description goes AFTER.
+     Items ONLY ever take an adjective — never a description — so an item whose
+     tone lacks adjectives is returned undecorated (the `categoryName !== 'item'`
+     guard on the description branch enforces this rule for every content source). */
   const decorate = (random: RandomNumberGenerator | undefined, base: string, categoryName: string, context: GenerationContext): string => {
     const category = toneCategory(context, categoryName);
     if (!category) return base;
@@ -75,7 +78,7 @@ export const createContentGenerator = (source: ContentSource = defaultContent) =
     const useAdjective = !!(category.adjectives && category.adjectives.length)
       && (categoryName === 'item' || !hasDescriptions || chance(random, 0.55));
     if (useAdjective) return capitalizeFirst(pick(random, category.adjectives) ?? '') + ' ' + base; // adjective BEFORE (items only ever use adjectives)
-    if (hasDescriptions) return base + ' ' + pick(random, category.descriptions);                    // description AFTER
+    if (hasDescriptions && categoryName !== 'item') return base + ' ' + pick(random, category.descriptions); // description AFTER (never for items)
     return base;
   };
 
