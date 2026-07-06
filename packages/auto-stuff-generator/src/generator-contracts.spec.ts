@@ -23,6 +23,12 @@ describe('generator contracts — default implementations conform through the in
     expect(() => text.generateAdjective(mulberry32(1), context, 'place')).not.toThrow();
     expect(() => text.generateDescription(mulberry32(1), context, 'place')).not.toThrow();
     expect(typeof text.generateLocation(mulberry32(1), context)).toBe('string');
+    // A flavor sentence is capitalized + period-terminated (or null when the tone
+    // has no matching place/sound/building description).
+    const flavor = text.generateFlavorSentence(mulberry32(1), context);
+    if (flavor !== null) {
+      expect(flavor).toMatch(/^[A-Z].*\.$/);
+    }
   });
 
   it('NameGenerator: full name resolves; title is TitleEntry-or-null', () => {
@@ -75,6 +81,7 @@ describe('generator contracts — a custom implementation is substitutable (seam
     generateAdjective: () => 'quantum',
     generateDescription: () => 'humming with static',
     generateLocation: () => 'The Null Vault',
+    generateFlavorSentence: () => 'Silence hums between the stars.',
   };
 
   it('substituted MonsterGenerator observably changes the produced monster', () => {
@@ -93,6 +100,45 @@ describe('generator contracts — a custom implementation is substitutable (seam
     const custom: TextGenerator = customText;
     expect(custom.generateLocation(mulberry32(7), context)).toBe('The Null Vault');
     expect(defaultTextGenerator.generateLocation(mulberry32(7), context)).not.toBe('The Null Vault');
+  });
+});
+
+describe('generateDungeon — the injected TextGenerator drives flavor and tone-decorated notes (R4 seam)', () => {
+  // A recognizable text generator: its flavor sentence and every adjective/description
+  // carry a token that never appears in the built-in tone data.
+  const TOKEN = 'ZZYXTEXT';
+  const stampedText: TextGenerator = {
+    generateAdjective: () => TOKEN,
+    generateDescription: () => TOKEN,
+    generateLocation: () => 'The Null Vault',
+    generateFlavorSentence: () => `${TOKEN} echoes here.`,
+  };
+
+  it('the flavor sentence comes from the injected generator', () => {
+    const dungeon = generateDungeon(0xc0ffee, 3, 'detailed', undefined, stampedText);
+    expect(dungeon.flavor).toBe(`${TOKEN} echoes here.`);
+    // GATE 2b: with the default generator the flavor is the tone-composed text, never the token.
+    expect(generateDungeon(0xc0ffee, 3, 'detailed').flavor).not.toContain(TOKEN);
+  });
+
+  it('tone-decorated marker notes come from the injected generator', () => {
+    // Across a spread of seeds at least one detailed dungeon applies a tone description
+    // to a monster/boss note; with the injected generator that text is the token.
+    const stampedNoteSeen = Array.from({ length: 25 }, (_unused, seed) =>
+      generateDungeon(seed, 4, 'detailed', undefined, stampedText),
+    ).some((dungeon) => dungeon.markers.some((marker) => marker.note?.includes(TOKEN)));
+    expect(stampedNoteSeen).toBe(true);
+    // GATE 2b: the built-in generator never emits the token.
+    const defaultNoteSeen = Array.from({ length: 25 }, (_unused, seed) =>
+      generateDungeon(seed, 4, 'detailed'),
+    ).some((dungeon) => dungeon.markers.some((marker) => marker.note?.includes(TOKEN)));
+    expect(defaultNoteSeen).toBe(false);
+  });
+
+  it('injecting only a custom TextGenerator leaves seeded output otherwise deterministic', () => {
+    // Same seed + same injected text generator ⇒ identical dungeon.
+    expect(generateDungeon(42, 3, 'detailed', undefined, stampedText))
+      .toEqual(generateDungeon(42, 3, 'detailed', undefined, stampedText));
   });
 });
 

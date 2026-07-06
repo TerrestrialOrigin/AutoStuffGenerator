@@ -24,7 +24,7 @@ import type { DungeonMode, DungeonResult } from './dungeon-types';
 import type { GenerationContext } from './rpg-gen';
 import type { RandomNumberGenerator } from './rng-utils';
 
-/** Tone-driven text: adjectives, descriptions, and location names. */
+/** Tone-driven text: adjectives, descriptions, location names, and flavor sentences. */
 export interface TextGenerator {
   /** A tone-appropriate adjective for a category (`place`, `monster`, …), or `null`. */
   generateAdjective(random: RandomNumberGenerator, context: GenerationContext, category: string): string | null;
@@ -32,6 +32,12 @@ export interface TextGenerator {
   generateDescription(random: RandomNumberGenerator, context: GenerationContext, category: string): string | null;
   /** A place/location name for the context's genre, optionally decorated, or `null`. */
   generateLocation(random: RandomNumberGenerator, context: GenerationContext): string | null;
+  /**
+   * A single tone-flavored sentence describing a place — e.g. "Hallways where wind
+   * howls." — capitalized and period-terminated, or `null` when the tone has no
+   * matching place/sound/building description. Draws only from `random`.
+   */
+  generateFlavorSentence(random: RandomNumberGenerator, context: GenerationContext): string | null;
 }
 
 /** People names and titles. */

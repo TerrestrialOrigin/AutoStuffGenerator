@@ -349,3 +349,46 @@ describe('DB-1 — themePool yields real theme names, not array indices', () => 
     expect(sawCelticTitle).toBe(true);     // and the theme-matched title actually resolves
   });
 });
+
+/* ------------------------------------------------------------------
+   N11 — decorate honors "items only ever take an adjective". A tone
+   whose `item` category has descriptions but NO adjectives must leave
+   an item base undecorated (never appending a description), while a
+   non-item category (place) still receives its description.
+   ------------------------------------------------------------------ */
+describe('decorate — item-adjective rule (N11)', () => {
+  function itemRuleSource(): ContentSource {
+    return {
+      monsters: { fantasy: [{ name: 'Gronk' }] },
+      names: { given: [], surname: [] },
+      titles: [],
+      // 'grim' item has descriptions but no adjectives; place has descriptions too.
+      tones: {
+        grim: {
+          item: { descriptions: ['of doom'] },
+          place: { descriptions: ['under a black sky'] },
+        },
+      },
+      loot: { fantasy: { relic: ['orb'] } },
+      places: { fantasy: ['crypt'] },
+      moods: [],
+      activities: {},
+      traps: {},
+    };
+  }
+
+  const engine = createContentGenerator(itemRuleSource());
+  const grim: GenerationContext = { genre: 'fantasy', theme: null, tone: 'grim' };
+  // Draws 0 → pick returns the first element; chance(p) → 0 < p is always true,
+  // so the ~40% item-decorate and ~70% place-decorate paths both fire.
+  const alwaysFirst = () => 0;
+
+  it('leaves an item undecorated when its tone has descriptions but no adjectives', () => {
+    // GATE 2b: without the `categoryName !== 'item'` guard this would be "orb of doom".
+    expect(engine.randomItem(alwaysFirst, grim)).toBe('orb');
+  });
+
+  it('still appends a description for a non-item category (place)', () => {
+    expect(engine.randomLocation(alwaysFirst, grim)).toBe('crypt under a black sky');
+  });
+});

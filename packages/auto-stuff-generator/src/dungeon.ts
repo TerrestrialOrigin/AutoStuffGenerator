@@ -10,6 +10,8 @@
    ============================================================ */
 import { defaultContent } from './data';
 import { defaultContentGenerator, type GenerationContext } from './rpg-gen';
+import { defaultTextGenerator } from './default-generators';
+import type { TextGenerator } from './generator-contracts';
 import type { GenreMap, MonsterEntry } from './content-types';
 import type {
   DungeonMarker,
@@ -612,18 +614,18 @@ const describeMoney = (genre: string, random: GenerationRandom): string => {
   return 'Money: ' + random.intBetween(5, 200);
 };
 
-const enrichMonsterMarker = (marker: DungeonMarker, context: GenerationContext, random: GenerationRandom): void => {
+const enrichMonsterMarker = (marker: DungeonMarker, context: GenerationContext, textGenerator: TextGenerator, random: GenerationRandom): void => {
   marker.label = defaultContentGenerator.randomMonster(random.next, context) || 'Monster';
   marker.note = '(' + pickDifficulty(random).toLowerCase() + ')';
   if (random.chance(MONSTER_DESCRIPTION_CHANCE)) {
     const description = random.chance(TONE_ADJECTIVE_CHANCE)
-      ? defaultContentGenerator.toneAdjective(random.next, context, 'monster')
-      : defaultContentGenerator.toneDescription(random.next, context, 'monster');
+      ? textGenerator.generateAdjective(random.next, context, 'monster')
+      : textGenerator.generateDescription(random.next, context, 'monster');
     if (description) marker.note += ' ' + capitalizeFirst(description) + '.';
   }
 };
 
-const enrichBossMarker = (marker: DungeonMarker, context: GenerationContext, bossCreaturePool: MonsterEntry[], random: GenerationRandom): void => {
+const enrichBossMarker = (marker: DungeonMarker, context: GenerationContext, bossCreaturePool: MonsterEntry[], textGenerator: TextGenerator, random: GenerationRandom): void => {
   const bossName = defaultContentGenerator.randomName(random.next, context);
   const creatureEntry = random.pickFrom(bossCreaturePool);
   const creatureName = (creatureEntry && creatureEntry.name) || 'Beast';
@@ -633,8 +635,8 @@ const enrichBossMarker = (marker: DungeonMarker, context: GenerationContext, bos
   const bossCategory = useName ? 'person' : 'monster';
   if (random.chance(BOSS_DESCRIPTION_CHANCE)) {
     const description = random.chance(TONE_ADJECTIVE_CHANCE)
-      ? defaultContentGenerator.toneAdjective(random.next, context, bossCategory)
-      : defaultContentGenerator.toneDescription(random.next, context, bossCategory);
+      ? textGenerator.generateAdjective(random.next, context, bossCategory)
+      : textGenerator.generateDescription(random.next, context, bossCategory);
     if (description) marker.note += ' ' + capitalizeFirst(description) + '.';
   }
 };
@@ -655,13 +657,13 @@ const enrichTrapMarker = (marker: DungeonMarker, context: GenerationContext, ran
 /* 'detailed' mode: name & classify every foe, hoard and trap from the random
    lists. Enrichment is a per-kind lookup: markers of kinds without an enricher
    (including consumer-defined kinds) pass through untouched and draw nothing. */
-const enrichDetailed = (markers: DungeonMarker[], context: GenerationContext, random: GenerationRandom): void => {
+const enrichDetailed = (markers: DungeonMarker[], context: GenerationContext, textGenerator: TextGenerator, random: GenerationRandom): void => {
   const monstersByGenre: GenreMap<MonsterEntry> = defaultContent.monsters;
   const bossCreaturePool = (monstersByGenre[context.genre] || []).concat(monstersByGenre.generic || [])
     .filter((monster) => !monster.isAnimal); // bosses are never animals
   const enrichersByKind: Partial<Record<KnownMarkerType, (marker: DungeonMarker) => void>> = {
-    monster: (marker) => enrichMonsterMarker(marker, context, random),
-    boss: (marker) => enrichBossMarker(marker, context, bossCreaturePool, random),
+    monster: (marker) => enrichMonsterMarker(marker, context, textGenerator, random),
+    boss: (marker) => enrichBossMarker(marker, context, bossCreaturePool, textGenerator, random),
     treasure: (marker) => enrichTreasureMarker(marker, context, random),
     trap: (marker) => enrichTrapMarker(marker, context, random),
   };
@@ -676,14 +678,12 @@ const enrichDetailed = (markers: DungeonMarker[], context: GenerationContext, ra
 
 /* ---------------- step 6: name & flavor ---------------- */
 
-const pickNameAndFlavor = (context: GenerationContext | null, random: GenerationRandom): { name: string | null; flavor: string | null } => {
+const pickNameAndFlavor = (context: GenerationContext | null, textGenerator: TextGenerator, random: GenerationRandom): { name: string | null; flavor: string | null } => {
   if (!context) return { name: null, flavor: null };
-  let name: string | null = null, flavor: string | null = null;
-  const location = defaultContentGenerator.randomLocation(random.next, context);
+  let name: string | null = null;
+  const location = textGenerator.generateLocation(random.next, context);
   if (location) name = (/^the\b/i.test(location) ? '' : 'The ') + location;
-  const flavorCategory = random.pickFrom(['place', 'sound', 'building']) ?? 'place';
-  const flavorDescription = defaultContentGenerator.toneDescription(random.next, context, flavorCategory) || defaultContentGenerator.toneDescription(random.next, context, 'place');
-  if (flavorDescription) flavor = capitalizeFirst(flavorDescription) + '.';
+  const flavor = textGenerator.generateFlavorSentence(random.next, context);
   return { name, flavor };
 };
 
@@ -721,8 +721,8 @@ export interface DungeonStrategy {
     markers: DungeonMarker[],
     random: GenerationRandom,
   ): SecretFeatures;
-  enrichMarkers(markers: DungeonMarker[], context: GenerationContext, random: GenerationRandom): void;
-  pickNameAndFlavor(context: GenerationContext | null, random: GenerationRandom): { name: string | null; flavor: string | null };
+  enrichMarkers(markers: DungeonMarker[], context: GenerationContext, textGenerator: TextGenerator, random: GenerationRandom): void;
+  pickNameAndFlavor(context: GenerationContext | null, textGenerator: TextGenerator, random: GenerationRandom): { name: string | null; flavor: string | null };
 }
 
 /** The built-in algorithm — spread it to override individual steps. */
@@ -743,6 +743,7 @@ export function generateDungeon(
   level?: number,
   mode?: DungeonMode,
   strategy: DungeonStrategy = defaultDungeonStrategy,
+  textGenerator: TextGenerator = defaultTextGenerator,
 ): DungeonResult {
   // input robustness: a non-finite seed becomes a deterministic default (0);
   // an unknown/missing mode becomes 'full'; level is clamped in createLevelSpec.
@@ -761,8 +762,8 @@ export function generateDungeon(
     : { secretPaths: [], secretRooms: [], secretFloor: createRockGrid(spec.gridWidth, spec.gridHeight) };
 
   const contentContext: GenerationContext | null = defaultContentGenerator ? defaultContentGenerator.context(random.next) : null;
-  if (safeMode === 'detailed' && contentContext) strategy.enrichMarkers(markers, contentContext, random);
-  const { name, flavor } = strategy.pickNameAndFlavor(contentContext, random);
+  if (safeMode === 'detailed' && contentContext) strategy.enrichMarkers(markers, contentContext, textGenerator, random);
+  const { name, flavor } = strategy.pickNameAndFlavor(contentContext, textGenerator, random);
 
   const result: DungeonResult = {
     version: 1,
