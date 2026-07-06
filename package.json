@@ -1,58 +1,24 @@
 {
-  "name": "auto-stuff-generator",
-  "version": "0.5.0",
-  "description": "Headless random-content generator for RPGs: a coherent content engine (RPGGen) plus a seeded procedural dungeon generator",
-  "main": "dist/index.js",
-  "module": "dist/index.js",
-  "types": "dist/types/index.d.ts",
+  "name": "auto-stuff-generator-workspace",
+  "version": "0.0.0",
+  "private": true,
+  "description": "npm-workspaces monorepo root for auto-stuff-generator and its generator packages",
   "engines": {
     "node": ">=20.11"
   },
-  "files": [
-    "dist/**/*"
+  "workspaces": [
+    "packages/*"
   ],
   "scripts": {
-    "build": "npm run lint && npm run type-check && npm run test && esbuild --bundle --minify --sourcemap src/index.ts --outfile=dist/index.js --format=esm && npm run types",
-    "type-check": "tsc --noEmit",
-    "types": "tsc --emitDeclarationOnly",
-    "test": "jest",
-    "lint": "eslint \"src/**/*.{ts,tsx}\"",
-    "type-check:watch": "tsc --noEmit --watch",
-    "build:watch": "esbuild --bundle --watch --sourcemap src/index.ts --outfile=dist/index.js --format=esm",
-    "lint:watch": "nodemon --watch src --ext ts,tsx --exec \"npm run lint\"",
-    "dev": "concurrently \"npm run type-check:watch\" \"npm run build:watch\" \"npm run lint:watch\""
+    "build": "npm run build --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "lint": "npm run lint --workspaces --if-present",
+    "type-check": "npm run type-check --workspaces --if-present"
   },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/TerrestrialOrigin/AutoStuffGenerator.git"
   },
-  "keywords": [
-    "rpg",
-    "procedural-generation",
-    "dungeon-generator",
-    "random-content",
-    "tabletop",
-    "seeded-rng"
-  ],
   "author": "Terrestrial Origin LLC",
-  "license": "MIT",
-  "bugs": {
-    "url": "https://github.com/TerrestrialOrigin/AutoStuffGenerator#issues"
-  },
-  "homepage": "https://github.com/TerrestrialOrigin/AutoStuffGenerator#readme",
-  "devDependencies": {
-    "@eslint/js": "^9.20.0",
-    "@types/jest": "^30.0.0",
-    "@typescript-eslint/eslint-plugin": "^8.23.0",
-    "@typescript-eslint/parser": "^8.23.0",
-    "concurrently": "^9.1.2",
-    "esbuild": "^0.27.2",
-    "eslint": "^9.20.0",
-    "globals": "^17.0.0",
-    "jest": "^30.2.0",
-    "nodemon": "^3.1.9",
-    "ts-jest": "^29.2.5",
-    "typescript": "^5.7.3",
-    "typescript-eslint": "^8.23.0"
-  }
+  "license": "MIT"
 }

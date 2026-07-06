@@ -68,7 +68,7 @@ describe('generateDungeon — determinism', () => {
 describe('generateDungeon — serializable result', () => {
   it('round-trips through JSON unchanged', () => {
     const dungeon = generateDungeon(777, 4, 'detailed');
-    const roundTripped = JSON.parse(JSON.stringify(dungeon));
+    const roundTripped = JSON.parse(JSON.stringify(dungeon)) as typeof dungeon;
     expect(roundTripped).toEqual(dungeon);
   });
 
