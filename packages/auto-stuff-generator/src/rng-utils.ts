@@ -33,14 +33,21 @@ export const randomInt = (random: RandomNumberGenerator, min: number, max: numbe
 export const randomIndex = (random: RandomNumberGenerator, length: number): number =>
   Math.floor(random() * length);
 
-/** Fisher–Yates shuffle, mutating and returning `list`. Draws: length - 1 (0 for length < 2). */
-export const shuffleInPlace = <ItemType>(random: RandomNumberGenerator, list: ItemType[]): ItemType[] => {
+/**
+ * Fisher–Yates shuffle, mutating and returning `list`. Draws: length - 1 (0 for length < 2).
+ *
+ * `ItemType extends NonNullable<unknown>` (non-nullish, primitives included) forbids a
+ * `(T | undefined)[]` input: a genuine `undefined` element could otherwise hit the in-range
+ * guard below and be silently skipped, biasing the shuffle. With the constraint, elements are
+ * never `undefined`, so the guard is provably dead (it only satisfies noUncheckedIndexedAccess).
+ */
+export const shuffleInPlace = <ItemType extends NonNullable<unknown>>(random: RandomNumberGenerator, list: ItemType[]): ItemType[] => {
   for (let i = list.length - 1; i > 0; i--) {
     const j = randomIndex(random, i + 1);
     const atI = list[i];
     const atJ = list[j];
-    // i > 0 and 0 <= j <= i < length, so both reads are in range; the guard is
-    // unreachable and exists only to satisfy noUncheckedIndexedAccess.
+    // 0 <= j <= i < length, so both reads are in range and (given ItemType extends {})
+    // never undefined; this guard is unreachable and exists only for noUncheckedIndexedAccess.
     if (atI === undefined || atJ === undefined) continue;
     list[i] = atJ;
     list[j] = atI;
