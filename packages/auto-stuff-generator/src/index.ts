@@ -29,6 +29,24 @@ export type {
 export { defaultContent } from './data';
 export type { ContentData } from './data';
 
+// Generator plugin contracts (the abstract interfaces every implementation codes to)
+export type {
+  TextGenerator,
+  NameGenerator,
+  MonsterGenerator,
+  LootGenerator,
+  DungeonGenerator,
+} from './generator-contracts';
+
+// Built-in default implementations of the contracts (proven `satisfies` each interface)
+export {
+  defaultTextGenerator,
+  defaultNameGenerator,
+  defaultMonsterGenerator,
+  defaultLootGenerator,
+  defaultDungeonGenerator,
+} from './default-generators';
+
 // Procedural dungeon generator + seeded RNG factory + strategy seam
 export { defaultDungeonStrategy, generateDungeon, mulberry32 } from './dungeon';
 export type { CarveSurface, DungeonStrategy, FloorGrid, GenerationRandom, InternalRoom, ResolvedLevelSpec, SecretFeatures } from './dungeon';

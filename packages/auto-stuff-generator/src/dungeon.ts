@@ -187,7 +187,7 @@ export interface GenerationRandom {
   // Draws once even for an empty list (then yields undefined) — callers guard.
   pickFrom<ItemType>(list: ItemType[]): ItemType | undefined;
   chance(probability: number): boolean;
-  shuffleInPlace<ItemType>(list: ItemType[]): ItemType[];
+  shuffleInPlace<ItemType extends NonNullable<unknown>>(list: ItemType[]): ItemType[];
 }
 
 export const createGenerationRandom = (seed: number): GenerationRandom => {
