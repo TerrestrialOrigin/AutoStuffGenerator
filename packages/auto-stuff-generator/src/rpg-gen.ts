@@ -17,7 +17,7 @@
    count (see rng-utils). Any edit that changes when a draw happens
    changes every seeded output — the golden-baseline spec locks this.
    ============================================================ */
-import type { ContentSource, MonsterEntry, TitleEntry, ToneCategory } from './content-types';
+import type { ContentSource, GivenNameEntry, MonsterEntry, TitleEntry, ToneCategory } from './content-types';
 import { defaultContent } from './data';
 import { capitalizeFirst, chance, pick, type RandomNumberGenerator } from './rng-utils';
 
@@ -134,11 +134,12 @@ export const createContentGenerator = (source: ContentSource = defaultContent) =
     return matching.length ? pick(random, matching) : null;
   };
 
-  const randomName = (random?: RandomNumberGenerator, maybeContext?: GenerationContext): string | null => {
-    const context = maybeContext || makeContext(random);
+  /* The themed given-name pick shared by the full-name and given-name paths.
+     Draw order: strict genre+theme pool, then genre-only pool, then the whole
+     table — one pick draw per non-empty attempted pool (unchanged from the
+     original inline logic; the golden sequences lock it). */
+  const pickGivenNameEntry = (random: RandomNumberGenerator | undefined, context: GenerationContext, gender: string): GivenNameEntry | null => {
     const given = source.names.given;
-    if (!given.length) return null;
-    const gender = chance(random, 0.5) ? 'male' : 'female';
     const pool = (strictTheme: boolean) =>
       given.filter((nameEntry) => {
         if (nameEntry.gender !== gender) return false;
@@ -146,7 +147,23 @@ export const createContentGenerator = (source: ContentSource = defaultContent) =
         const themeMatches = nameEntry.theme === 'generic' || (!!context.theme && nameEntry.theme === context.theme);
         return strictTheme ? (genreMatches && themeMatches) : genreMatches;
       });
-    const first = pick(random, pool(true)) || pick(random, pool(false)) || pick(random, given);
+    return pick(random, pool(true)) || pick(random, pool(false)) || pick(random, given);
+  };
+
+  const randomGivenName = (random?: RandomNumberGenerator, maybeContext?: GenerationContext): string | null => {
+    const context = maybeContext || makeContext(random);
+    if (!source.names.given.length) return null;
+    const gender = chance(random, 0.5) ? 'male' : 'female';
+    const entry = pickGivenNameEntry(random, context, gender);
+    return entry ? entry.name : null;
+  };
+
+  const randomName = (random?: RandomNumberGenerator, maybeContext?: GenerationContext): string | null => {
+    const context = maybeContext || makeContext(random);
+    const given = source.names.given;
+    if (!given.length) return null;
+    const gender = chance(random, 0.5) ? 'male' : 'female';
+    const first = pickGivenNameEntry(random, context, gender);
     if (!first) return null;
     let name: string = first.name;
     const surnames = source.names.surname.filter((surnameEntry) =>
@@ -186,12 +203,25 @@ export const createContentGenerator = (source: ContentSource = defaultContent) =
     return pick(random, genrePool(source.traps, context.genre));
   };
 
+  /* ---- dungeon names ---- */
+  /* a stock dungeon name from the names table's fragment pools, e.g. "The Sunken Vaults";
+     one pick draw per non-empty pool, null when both pools are empty. Genre-agnostic, so no
+     context parameter — the NameGenerator adapter supplies the contract's context-taking shape. */
+  const randomDungeonName = (random?: RandomNumberGenerator): string | null => {
+    const prefix = pick(random, source.names.dungeonNamePrefixes);
+    const suffix = pick(random, source.names.dungeonNameSuffixes);
+    if (prefix === null && suffix === null) return null;
+    return (prefix ?? '') + ' ' + (suffix ?? '');
+  };
+
   return {
     context,
     randomItem,
     randomLocation,
     randomMonster,
     randomName,
+    randomGivenName,
+    randomDungeonName,
     randomTitle,
     randomTrap,
     toneDescription,
@@ -200,6 +230,7 @@ export const createContentGenerator = (source: ContentSource = defaultContent) =
     randomActivity,
     randomAnimal,
     monsterPool,
+    themePool,
     genres: GENRES,
   };
 };

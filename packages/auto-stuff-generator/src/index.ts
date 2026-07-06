@@ -51,9 +51,9 @@ export {
   defaultDungeonGenerator,
 } from './default-generators';
 
-// Procedural dungeon generator + seeded RNG factory + strategy seam
+// Procedural dungeon generator + seeded RNG factory + strategy/generator seams
 export { defaultDungeonStrategy, generateDungeon, mulberry32 } from './dungeon';
-export type { CarveSurface, DungeonStrategy, FloorGrid, GenerationRandom, InternalRoom, ResolvedLevelSpec, SecretFeatures } from './dungeon';
+export type { CarveSurface, DungeonStrategy, FloorGrid, GenerationRandom, InjectedGenerators, InternalRoom, ResolvedGenerators, ResolvedLevelSpec, SecretFeatures } from './dungeon';
 
 // Dungeon result/value types
 export type {

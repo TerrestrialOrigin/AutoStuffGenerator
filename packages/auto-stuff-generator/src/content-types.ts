@@ -37,6 +37,10 @@ export interface SurnameEntry {
 export interface NamesTable {
   given: GivenNameEntry[];
   surname: SurnameEntry[];
+  /** Stock dungeon-name prefixes (e.g. "The Sunken"), composed with a suffix by the dungeon-name generators. */
+  dungeonNamePrefixes: string[];
+  /** Stock dungeon-name suffixes (e.g. "Vaults"), composed after a prefix by the dungeon-name generators. */
+  dungeonNameSuffixes: string[];
 }
 
 export interface TitleEntry {

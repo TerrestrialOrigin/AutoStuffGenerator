@@ -1,7 +1,7 @@
 import { mulberry32, generateDungeon } from './dungeon';
 import { shuffleInPlace } from './rng-utils';
 import type { GenerationContext } from './rpg-gen';
-import type { MonsterGenerator, TextGenerator } from './generator-contracts';
+import type { MonsterGenerator, NameGenerator, TextGenerator } from './generator-contracts';
 import {
   defaultTextGenerator,
   defaultNameGenerator,
@@ -36,6 +36,18 @@ describe('generator contracts — default implementations conform through the in
     expect(typeof defaultNameGenerator.generateFullName(mulberry32(2), context)).toBe('string');
     const title = defaultNameGenerator.generateTitle(mulberry32(2), context, 'female');
     expect(title === null || typeof title.title === 'string').toBe(true);
+  });
+
+  it('NameGenerator: given name, dungeon name, and themes resolve through the interface', () => {
+    const names: NameGenerator = defaultNameGenerator;
+    const context = fantasyContext();
+    expect(typeof names.generateGivenName(mulberry32(2), context)).toBe('string');
+    // Stock dungeon name: one prefix pick + one suffix pick joined with a space.
+    expect(names.generateDungeonName(mulberry32(2), context)).toMatch(/^The \S.* \S+$/);
+    const themes = names.availableThemes();
+    expect(themes.length).toBeGreaterThan(0);
+    expect(themes).not.toContain('generic');
+    for (const theme of themes) expect(theme).not.toMatch(/^\d+$/); // DB-1: never an array index
   });
 
   it('MonsterGenerator: monster resolves and monsterPool returns entries', () => {
@@ -115,7 +127,7 @@ describe('generateDungeon — the injected TextGenerator drives flavor and tone-
   };
 
   it('the flavor sentence comes from the injected generator', () => {
-    const dungeon = generateDungeon(0xc0ffee, 3, 'detailed', undefined, stampedText);
+    const dungeon = generateDungeon(0xc0ffee, 3, 'detailed', undefined, { text: stampedText });
     expect(dungeon.flavor).toBe(`${TOKEN} echoes here.`);
     // GATE 2b: with the default generator the flavor is the tone-composed text, never the token.
     expect(generateDungeon(0xc0ffee, 3, 'detailed').flavor).not.toContain(TOKEN);
@@ -125,7 +137,7 @@ describe('generateDungeon — the injected TextGenerator drives flavor and tone-
     // Across a spread of seeds at least one detailed dungeon applies a tone description
     // to a monster/boss note; with the injected generator that text is the token.
     const stampedNoteSeen = Array.from({ length: 25 }, (_unused, seed) =>
-      generateDungeon(seed, 4, 'detailed', undefined, stampedText),
+      generateDungeon(seed, 4, 'detailed', undefined, { text: stampedText }),
     ).some((dungeon) => dungeon.markers.some((marker) => marker.note?.includes(TOKEN)));
     expect(stampedNoteSeen).toBe(true);
     // GATE 2b: the built-in generator never emits the token.
@@ -137,8 +149,80 @@ describe('generateDungeon — the injected TextGenerator drives flavor and tone-
 
   it('injecting only a custom TextGenerator leaves seeded output otherwise deterministic', () => {
     // Same seed + same injected text generator ⇒ identical dungeon.
-    expect(generateDungeon(42, 3, 'detailed', undefined, stampedText))
-      .toEqual(generateDungeon(42, 3, 'detailed', undefined, stampedText));
+    expect(generateDungeon(42, 3, 'detailed', undefined, { text: stampedText }))
+      .toEqual(generateDungeon(42, 3, 'detailed', undefined, { text: stampedText }));
+  });
+});
+
+describe('generateDungeon — the injected NameGenerator drives boss names and the stock dungeon name (R4 seam)', () => {
+  // A recognizable name generator: every produced name carries a token that
+  // never appears in the built-in name/fragment data.
+  const NAME_TOKEN = 'Zzyx Namington';
+  const DUNGEON_NAME_TOKEN = 'The Zzyx Fixture Vault';
+  const stampedNames: NameGenerator = {
+    generateFullName: () => NAME_TOKEN,
+    generateTitle: () => null,
+    generateGivenName: () => 'Zzyx',
+    generateDungeonName: () => DUNGEON_NAME_TOKEN,
+    availableThemes: () => ['zzyxian'],
+  };
+  // A text generator that never yields a location, forcing the stock-dungeon-name fallback.
+  const locationlessText: TextGenerator = {
+    generateAdjective: () => null,
+    generateDescription: () => null,
+    generateLocation: () => null,
+    generateFlavorSentence: () => null,
+  };
+
+  it('a named boss label comes from the injected generator', () => {
+    // Across a spread of seeds at least one detailed dungeon takes the named-boss
+    // path (~50% per boss); with the injected generator that name is the token.
+    const stampedBossSeen = Array.from({ length: 25 }, (_unused, seed) =>
+      generateDungeon(seed, 4, 'detailed', undefined, { names: stampedNames }),
+    ).some((dungeon) => dungeon.markers.some((marker) => marker.type === 'boss' && marker.label === NAME_TOKEN));
+    expect(stampedBossSeen).toBe(true);
+    // GATE 2b: the built-in generator never emits the token.
+    const defaultBossSeen = Array.from({ length: 25 }, (_unused, seed) =>
+      generateDungeon(seed, 4, 'detailed'),
+    ).some((dungeon) => dungeon.markers.some((marker) => marker.label === NAME_TOKEN));
+    expect(defaultBossSeen).toBe(false);
+  });
+
+  it('the stock dungeon-name fallback comes from the injected generator', () => {
+    // With no location-derived name available, the dungeon name is the custom stock name.
+    const dungeon = generateDungeon(0xc0ffee, 3, 'detailed', undefined,
+      { text: locationlessText, names: stampedNames });
+    expect(dungeon.name).toBe(DUNGEON_NAME_TOKEN);
+    // GATE 2b: with the built-in name generator the fallback is fragment-composed, never the token.
+    const builtIn = generateDungeon(0xc0ffee, 3, 'detailed', undefined, { text: locationlessText });
+    expect(builtIn.name).not.toBe(DUNGEON_NAME_TOKEN);
+    expect(builtIn.name).toMatch(/^The \S.* \S+$/);
+  });
+
+  it('a null-returning NameGenerator degrades honestly (creature boss, empty stock name)', () => {
+    const nullNames: NameGenerator = {
+      generateFullName: () => null,
+      generateTitle: () => null,
+      generateGivenName: () => null,
+      generateDungeonName: () => null,
+      availableThemes: () => [],
+    };
+    const dungeon = generateDungeon(0xc0ffee, 4, 'detailed', undefined,
+      { text: locationlessText, names: nullNames });
+    // No crash; every boss fell back to the creature-name path (never empty, never a person name draw).
+    const bosses = dungeon.markers.filter((marker) => marker.type === 'boss');
+    for (const boss of bosses) expect(boss.label && boss.label.length).toBeTruthy();
+    // The stock name honestly reflects "no dungeon-name content".
+    expect(dungeon.name).toBe('');
+  });
+
+  it('injecting only a custom NameGenerator leaves monsters, loot, and traps on the built-in engine', () => {
+    const dungeon = generateDungeon(7, 4, 'detailed', undefined, { names: stampedNames });
+    // Non-boss labels never carry the injected token — they still come from the built-in engine.
+    const nonBossMarkers = dungeon.markers.filter((marker) => marker.type !== 'boss');
+    for (const marker of nonBossMarkers) expect(marker.label ?? '').not.toContain('Zzyx');
+    // And injection stays fully deterministic: same seed + same generators ⇒ identical dungeon.
+    expect(generateDungeon(7, 4, 'detailed', undefined, { names: stampedNames })).toEqual(dungeon);
   });
 });
 
